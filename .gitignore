@@ -2,8 +2,14 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Outputs (learner PII + reports) — never committed
 output/*
 !output/.gitkeep
+
+# Inputs (UI exports contain the answer key) — kept locally, never committed
+input/*
+!input/sample_response.json
 
 # macOS
 .DS_Store
