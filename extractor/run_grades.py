@@ -5,9 +5,18 @@ Usage:
     python -m extractor.run_grades --course-id <course_slug>
     python -m extractor.run_grades                 # uses COURSE_ID from .env
 
+Output layout:
+    output/<label>/
+      <YYYY-MM-DD_HHmmss>/
+        raw/
+          raw_grades.json
+          extraction_report.json
+        course_grades.csv
+        course_grades.xlsx
+
 Complementary to run_extract.py. Provides the official recorded grade per learner
 per assessment unit (learningUnit_id == assessment_id), as a reconciliation source.
-API → CSV only: no validation, no recomputation, no cross-CSV comparison.
+API -> CSV only: no validation, no recomputation, no cross-CSV comparison.
 """
 
 from __future__ import annotations
@@ -79,10 +88,11 @@ def run(
         )
 
     folder = slugify(label) if label else f"course_{slugify(course_id)}"
-    out_dir = OUTPUT_DIR / folder
+    out_dir = OUTPUT_DIR / folder / run_ts
+    raw_dir = out_dir / "raw"
 
     raw_file = save_raw_response(
-        {"mode": "live", "pages": raw_pages}, out_dir, run_ts, prefix="raw_grades"
+        {"mode": "live", "pages": raw_pages}, raw_dir, prefix="raw_grades"
     )
     print(f"Saved raw response: {raw_file}")
 
@@ -97,12 +107,8 @@ def run(
 
     output_files = {"raw_grades": str(raw_file)}
     if rows:
-        csv_file = write_csv(
-            rows, GRADE_COLUMNS, out_dir, run_ts, filename_stem="course_grades"
-        )
-        xlsx_file = write_xlsx(
-            rows, GRADE_COLUMNS, out_dir, run_ts, filename_stem="course_grades"
-        )
+        csv_file = write_csv(rows, GRADE_COLUMNS, out_dir, "course_grades")
+        xlsx_file = write_xlsx(rows, GRADE_COLUMNS, out_dir, "course_grades")
         output_files["course_grades_csv"] = str(csv_file)
         output_files["course_grades_xlsx"] = str(xlsx_file)
         print(f"Wrote CSV : {csv_file}  ({len(rows)} rows)")
@@ -118,7 +124,7 @@ def run(
         stats=stats,
         output_files=output_files,
     )
-    report_file = write_report(report, out_dir, run_ts)
+    report_file = write_report(report, raw_dir)
     output_files["extraction_report"] = str(report_file)
     print(f"Wrote report: {report_file}")
 
@@ -128,6 +134,7 @@ def run(
         f"{stats['rows_written']} rows, "
         f"{stats['distinct_assessment_units']} distinct assessment unit(s)."
     )
+    print(f"Output folder: {out_dir}")
     print("Done.")
     return 0
 

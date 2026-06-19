@@ -6,6 +6,15 @@ Usage:
     python -m extractor.run_exam_config --xlsx export.xlsx \
         --assessment-id <id> --course-id <slug> --assessment-title "Nice title"
 
+Output layout:
+    output/<label>/
+      <YYYY-MM-DD_HHmmss>/
+        raw/
+          raw_exam_config.json
+          extraction_report.json
+        exam_config_as_is.csv
+        exam_config_as_is.xlsx
+
 This reads the answer key that the LearnWorlds API does NOT expose, from a manual
 UI export. It performs NO API call, NO answer validation, and NO comparison with
 submissions — it only normalizes the export into a clean, auditable CSV.
@@ -58,28 +67,23 @@ def run(
         extraction_timestamp=extraction_iso,
     )
 
-    # Output folder: the activity title by default (the answer-key export always
-    # carries a title), or an explicit --label override.
+    # Output folder: output/<label>/<timestamp>/
     folder = slugify(label) if label else slugify(title)
-    out_dir = OUTPUT_DIR / folder
+    out_dir = OUTPUT_DIR / folder / run_ts
+    raw_dir = out_dir / "raw"
 
     # Raw-first: persist the faithful parsed rows before the normalized CSV.
     raw_file = save_raw_response(
         {"source_file": xlsx_path.name, "rows": raw_rows},
-        out_dir,
-        run_ts,
+        raw_dir,
         prefix="raw_exam_config",
     )
     print(f"Saved raw copy: {raw_file}")
 
     output_files = {"raw_exam_config": str(raw_file)}
     if rows:
-        csv_file = write_csv(
-            rows, EXAM_CONFIG_COLUMNS, out_dir, run_ts, filename_stem="exam_config_as_is"
-        )
-        xlsx_file = write_xlsx(
-            rows, EXAM_CONFIG_COLUMNS, out_dir, run_ts, filename_stem="exam_config_as_is"
-        )
+        csv_file = write_csv(rows, EXAM_CONFIG_COLUMNS, out_dir, "exam_config_as_is")
+        xlsx_file = write_xlsx(rows, EXAM_CONFIG_COLUMNS, out_dir, "exam_config_as_is")
         output_files["exam_config_as_is_csv"] = str(csv_file)
         output_files["exam_config_as_is_xlsx"] = str(xlsx_file)
         print(f"Wrote CSV : {csv_file}  ({len(rows)} questions)")
@@ -96,7 +100,7 @@ def run(
         stats=stats,
         output_files=output_files,
     )
-    report_file = write_report(report, out_dir, run_ts)
+    report_file = write_report(report, raw_dir)
     output_files["extraction_report"] = str(report_file)
     print(f"Wrote report: {report_file}")
 
@@ -108,6 +112,7 @@ def run(
     )
     if stats.get("warnings"):
         print(f"Warnings: {len(stats['warnings'])} (see report).")
+    print(f"Output folder: {out_dir}")
     print("Done.")
     return 0
 

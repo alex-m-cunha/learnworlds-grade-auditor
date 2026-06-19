@@ -4,11 +4,29 @@
 Usage:
     python -m reconcile.run_reconcile --label <activity-folder>
     python -m reconcile.run_reconcile --assessment-dir output/<label>
-    python -m reconcile.run_reconcile --label <x> --grades-csv output/course_<slug>/course_grades_<ts>.csv
+    python -m reconcile.run_reconcile --label <x> --grades-csv output/course_<slug>/<ts>/course_grades.csv
 
-Reads the latest submissions_export_*.csv and exam_config_as_is_*.csv from the
-assessment folder, applies the deterministic rules, and writes the reports to
-<folder>/reconcile/. No API call, no LLM.
+Reads the latest submissions_export.csv and exam_config_as_is.csv from the
+assessment folder (inside any timestamped sub-run), applies the deterministic
+rules, and writes the reports to <run_folder>/reconcile/. No API call, no LLM.
+
+Output layout:
+    output/<label>/
+      <YYYY-MM-DD_HHmmss>/          <- the run that produced the inputs
+        reconcile/
+          reconciliation_report/
+            reconciliation_report.csv
+            reconciliation_report.xlsx
+          grade_reconciliation/
+            grade_reconciliation.csv
+            grade_reconciliation.xlsx
+          consistency_report/
+            consistency_report.csv
+            consistency_report.xlsx
+          manual_review_queue/
+            manual_review_queue.csv
+            manual_review_queue.xlsx
+          reconciliation_summary.json
 """
 
 from __future__ import annotations
@@ -51,12 +69,20 @@ QUEUE_COLUMNS = [
 ]
 
 
-def _timestamp() -> str:
-    return datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
-
 def _latest(folder: Path, stem: str):
-    files = sorted(glob.glob(str(folder / f"{stem}_*.csv")), key=os.path.getmtime)
+    """Find the most recently modified <stem>.csv inside any timestamped sub-run."""
+    # New layout: folder/<ts>/<stem>.csv
+    files = sorted(
+        glob.glob(str(folder / "*" / f"{stem}.csv")),
+        key=os.path.getmtime,
+    )
+    if files:
+        return files[-1]
+    # Fallback: old layout with timestamp in filename (folder/<stem>_<ts>.csv)
+    files = sorted(
+        glob.glob(str(folder / f"{stem}_*.csv")),
+        key=os.path.getmtime,
+    )
     return files[-1] if files else None
 
 
@@ -76,7 +102,6 @@ def _resolve_dir(label: str | None, assessment_dir: str | None) -> Path:
 
 
 def run(label=None, assessment_dir=None, grades_csv=None) -> int:
-    run_ts = _timestamp()
     folder = _resolve_dir(label, assessment_dir)
     if not folder.exists():
         raise ExtractorError(f"Assessment folder not found: {folder}")
@@ -84,11 +109,19 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
     sub_path = _latest(folder, "submissions_export")
     cfg_path = _latest(folder, "exam_config_as_is")
     if not sub_path:
-        raise ExtractorError(f"No submissions_export_*.csv in {folder}")
+        raise ExtractorError(f"No submissions_export.csv found under {folder}")
     if not cfg_path:
         raise ExtractorError(
-            f"No exam_config_as_is_*.csv in {folder} (run run_exam_config first)."
+            f"No exam_config_as_is.csv found under {folder} "
+            "(run run_exam_config first)."
         )
+
+    # Write reconcile output alongside the inputs that produced it.
+    run_folder = Path(sub_path).parent
+    # If sub_path is in a raw/ subfolder (shouldn't happen but guard), step up.
+    if run_folder.name == "raw":
+        run_folder = run_folder.parent
+
     submissions = _read_csv(sub_path)
     exam_config = _read_csv(cfg_path)
     print(f"Loaded {len(submissions)} submission rows, {len(exam_config)} config rows.")
@@ -189,7 +222,7 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
                     "blockType": bt_by_block.get((aid, bid)),
                     "description": desc_by_block.get((aid, bid)),
                     "normalized_answer": nans,
-                    "n_students": "",  # filled below if needed
+                    "n_students": "",
                     "distinct_points": sorted(ptset),
                     "flag": "inconsistent_scoring",
                 })
@@ -218,8 +251,10 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         })
 
     # ---- write outputs ----
-    out_dir = folder / "reconcile"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Each report gets its own subfolder; summary JSON stays at reconcile/ root.
+    reconcile_dir = run_folder / "reconcile"
+    reconcile_dir.mkdir(parents=True, exist_ok=True)
+
     outputs = {}
     for rows, cols, stem in [
         (report_rows, REPORT_COLUMNS, "reconciliation_report"),
@@ -228,8 +263,10 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         (queue_rows, QUEUE_COLUMNS, "manual_review_queue"),
     ]:
         if rows:
-            c = write_csv(rows, cols, out_dir, run_ts, filename_stem=stem)
-            x = write_xlsx(rows, cols, out_dir, run_ts, filename_stem=stem)
+            report_dir = reconcile_dir / stem
+            report_dir.mkdir(exist_ok=True)
+            c = write_csv(rows, cols, report_dir, stem)
+            x = write_xlsx(rows, cols, report_dir, stem)
             outputs[stem] = {"csv": str(c), "xlsx": str(x), "rows": len(rows)}
         else:
             outputs[stem] = {"rows": 0}
@@ -238,6 +275,7 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         "tool": "learnworlds-reconcile",
         "run_timestamp": datetime.now().isoformat(timespec="seconds"),
         "assessment_folder": str(folder),
+        "run_folder": str(run_folder),
         "inputs": {"submissions": os.path.basename(sub_path),
                    "exam_config": os.path.basename(cfg_path)},
         "submission_rows": len(submissions),
@@ -254,7 +292,7 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         ],
         "outputs": outputs,
     }
-    summary_path = out_dir / f"reconciliation_summary_{run_ts}.json"
+    summary_path = reconcile_dir / "reconciliation_summary.json"
     with summary_path.open("w", encoding="utf-8") as h:
         json.dump(summary, h, ensure_ascii=False, indent=2)
 
@@ -264,7 +302,7 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
     print(f"Grade reconciliation: {dict(grade_status_counts)}")
     print(f"Inconsistent-scoring questions: {len(consistency_rows)}")
     print(f"Manual-review questions (deduped): {len(queue_rows)}")
-    print(f"\nWrote reports to: {out_dir}")
+    print(f"\nWrote reports to: {reconcile_dir}")
     print(f"Summary: {summary_path}")
     print("Done.")
     return 0

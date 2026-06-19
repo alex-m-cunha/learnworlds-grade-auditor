@@ -4,8 +4,17 @@
 Usage:
     python -m extractor.run_extract                 # live, uses ASSESSMENT_ID from .env
     python -m extractor.run_extract --assessment-id <id>
-    python -m extractor.run_extract --from-raw output/<id>/raw_response_<ts>.json
+    python -m extractor.run_extract --from-raw output/<label>/<ts>/raw/raw_response.json
                                                     # offline regression replay
+
+Output layout (one timestamped folder per run):
+    output/<label>/
+      <YYYY-MM-DD_HHmmss>/
+        raw/
+          raw_response.json
+          extraction_report.json
+        submissions_export.csv
+        submissions_export.xlsx
 
 This module orchestrates only. The HTTP/auth/pagination lives in client.py, the
 assessment knowledge in submissions.py, serialization in writers.py, and the run
@@ -101,12 +110,13 @@ def run(
                 client, [s.get("user_id") for s in data if isinstance(s, dict)]
             )
 
-    # Folder name: the activity label/title when given, else the assessment id.
+    # Folder: output/<label>/<timestamp>/
     folder = slugify(label) if label else str(assessment_id)
-    out_dir = OUTPUT_DIR / folder
+    out_dir = OUTPUT_DIR / folder / run_ts
+    raw_dir = out_dir / "raw"
 
     # Raw-first: always persist the raw payload before transforming.
-    raw_file = save_raw_response(raw_to_save, out_dir, run_ts)
+    raw_file = save_raw_response(raw_to_save, raw_dir)
     print(f"Saved raw response: {raw_file}")
 
     rows, stats = flatten_submissions(
@@ -120,8 +130,8 @@ def run(
 
     output_files = {"raw_response": str(raw_file)}
     if rows:
-        csv_file = write_csv(rows, SUBMISSION_COLUMNS, out_dir, run_ts)
-        xlsx_file = write_xlsx(rows, SUBMISSION_COLUMNS, out_dir, run_ts)
+        csv_file = write_csv(rows, SUBMISSION_COLUMNS, out_dir, "submissions_export")
+        xlsx_file = write_xlsx(rows, SUBMISSION_COLUMNS, out_dir, "submissions_export")
         output_files["submissions_export_csv"] = str(csv_file)
         output_files["submissions_export_xlsx"] = str(xlsx_file)
         print(f"Wrote CSV : {csv_file}  ({len(rows)} rows)")
@@ -141,7 +151,7 @@ def run(
         stats=stats,
         output_files=output_files,
     )
-    report_file = write_report(report, out_dir, run_ts)
+    report_file = write_report(report, raw_dir)
     output_files["extraction_report"] = str(report_file)
     print(f"Wrote report: {report_file}")
 
@@ -153,6 +163,7 @@ def run(
     )
     if stats.get("warnings"):
         print(f"Warnings: {len(stats['warnings'])} (see report).")
+    print(f"Output folder: {out_dir}")
     print("Done.")
     return 0
 
@@ -174,7 +185,7 @@ def _parse_args(argv):
     )
     parser.add_argument(
         "--from-raw",
-        help="Replay a saved raw_response_*.json instead of calling the API "
+        help="Replay a saved raw_response.json instead of calling the API "
         "(offline regression).",
     )
     parser.add_argument(

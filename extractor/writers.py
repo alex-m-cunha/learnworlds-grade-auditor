@@ -1,8 +1,11 @@
-"""Output writers: raw JSON + CSV.
+"""Output writers: raw JSON + CSV + XLSX.
 
-CSV rule: arrays/objects are serialized as JSON strings (so nested structures
-like answerData/downloads are preserved, never flattened away). Scalars and
-null pass through unchanged. None -> empty cell.
+Timestamp lives in the parent folder, not the filename.  Files always use their
+stem name (e.g. submissions_export.csv) so they are human-readable at a glance.
+
+CSV rule: arrays/objects are serialized as JSON strings (nested structures like
+answerData/downloads are preserved, never flattened away). Scalars and null pass
+through unchanged. None -> empty cell.
 """
 
 from __future__ import annotations
@@ -29,11 +32,11 @@ def _cell(value):
 
 
 def save_raw_response(
-    raw, out_dir: Path, timestamp: str, prefix: str = "raw_response"
+    raw, out_dir: Path, prefix: str = "raw_response"
 ) -> Path:
     """Persist the full raw payload (all pages) before any transformation."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{prefix}_{timestamp}.json"
+    path = out_dir / f"{prefix}.json"
     with path.open("w", encoding="utf-8") as handle:
         json.dump(raw, handle, ensure_ascii=False, indent=2)
     return path
@@ -43,12 +46,11 @@ def write_csv(
     rows: list[dict],
     columns: list[str],
     out_dir: Path,
-    timestamp: str,
     filename_stem: str = "submissions_export",
 ) -> Path:
-    """Write rows to <filename_stem>_<timestamp>.csv (UTF-8 BOM for Excel)."""
+    """Write rows to <filename_stem>.csv (UTF-8 BOM for Excel)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{filename_stem}_{timestamp}.csv"
+    path = out_dir / f"{filename_stem}.csv"
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
@@ -57,10 +59,10 @@ def write_csv(
     return path
 
 
-def write_report(report: dict, out_dir: Path, timestamp: str) -> Path:
+def write_report(report: dict, out_dir: Path, name: str = "extraction_report") -> Path:
     """Write the extraction report JSON."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"extraction_report_{timestamp}.json"
+    path = out_dir / f"{name}.json"
     with path.open("w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
     return path
@@ -84,10 +86,9 @@ def write_xlsx(
     rows: list[dict],
     columns: list[str],
     out_dir: Path,
-    timestamp: str,
     filename_stem: str = "submissions_export",
 ) -> Path:
-    """Write rows to <filename_stem>_<timestamp>.xlsx (same data/columns as CSV).
+    """Write rows to <filename_stem>.xlsx (same data/columns as CSV).
 
     Arrays/objects are serialized as JSON strings, matching the CSV output.
     """
@@ -101,7 +102,7 @@ def write_xlsx(
         ) from exc
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{filename_stem}_{timestamp}.xlsx"
+    path = out_dir / f"{filename_stem}.xlsx"
     wb = Workbook(write_only=True)  # memory-friendly for large extracts
     ws = wb.create_sheet()
     ws.append(list(columns))
