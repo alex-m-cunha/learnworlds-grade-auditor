@@ -1,0 +1,47 @@
+{
+  "_comment": "BEST-GUESS sample shape for offline development. Replace with a real LearnWorlds 'Get Assessment Responses' payload at milestone 2, then adjust the parser if needed.",
+  "data": [
+    {
+      "learner": { "email": "ana.silva@example.com" },
+      "grade": 85,
+      "blocks": [
+        {
+          "description": "What is the primary goal of a balanced scorecard?",
+          "answer": "To align business activities to the vision and strategy of the organization.",
+          "points": 10,
+          "blockMaxScore": 10
+        },
+        {
+          "description": "List two limitations of NPV analysis.",
+          "answer": "It is sensitive to the discount rate.",
+          "points": 5,
+          "blockMaxScore": 10
+        },
+        {
+          "description": "Define the weighted average cost of capital (WACC).",
+          "answer": "Not sure.",
+          "points": 0,
+          "blockMaxScore": 10
+        }
+      ]
+    },
+    {
+      "learner": { "email": "joao.pereira@example.com" },
+      "grade": 70,
+      "blocks": [
+        {
+          "description": "What is the primary goal of a balanced scorecard?",
+          "answer": "To measure only financial performance.",
+          "points": 0,
+          "blockMaxScore": 10
+        },
+        {
+          "description": "List two limitations of NPV analysis.",
+          "answer": "Sensitive to discount rate and assumes reinvestment at that rate.",
+          "points": 10,
+          "blockMaxScore": 10
+        }
+      ]
+    }
+  ]
+}
