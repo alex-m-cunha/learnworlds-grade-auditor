@@ -1,11 +1,14 @@
 # Processo de auditoria de avaliações — end-to-end
 
-Guião completo para produzir, a partir do LearnWorlds, os ficheiros CSV limpos que
-alimentam a validação externa (conta ChatGPT da empresa).
+Guião completo para, a partir do LearnWorlds, **extrair** os dados das avaliações e
+**reconciliar** as fontes de forma determinística, produzindo relatórios auditáveis.
 
-> **Âmbito:** este projeto é **só extração** (API → CSV / export UI → CSV).
-> **Não** valida respostas, **não** compara CSVs, **não** recalcula notas. Esses
-> passos pertencem à fase de validação, que é **separada** e corre noutro sítio.
+> **Âmbito:** este projeto faz (1) a **extração** (API → CSV / export UI → CSV) e
+> (2) uma **reconciliação determinística** que junta as fontes e **assinala**
+> discrepâncias com regras exatas e auditáveis (Passo 4). Fica **fora**: qualquer
+> juízo semântico/pedagógico, validação por LLM, ou "corrigir" dados. A
+> reconciliação **não decide** se uma pergunta está mal feita — apenas levanta o
+> caso para revisão humana.
 
 ---
 
@@ -18,7 +21,17 @@ alimentam a validação externa (conta ChatGPT da empresa).
 | 3 | `exam_config_as_is.csv` | O **gabarito**: respostas corretas configuradas, opções, feedback | **Export manual da UI** (a API não o expõe) |
 
 As três juntam-se por **`user` (email/user_id)** + **texto da pergunta** (`description`).
-Não há id de pergunta partilhado no export da UI — por isso o join é por texto.
+Não há id de pergunta partilhado no export da UI — por isso o join é por texto
+(normalizado, robusto a pontuação/espaços).
+
+> ⚠️ **Pré-condição crítica:** o gabarito (fonte 3) tem de ser exportado da **mesma
+> versão** do teste que os alunos fizeram. Se o teste foi **editado depois** das
+> submissões, os enunciados deixam de bater e o join falha (não é bug — são versões
+> diferentes). O Passo 4 mede e reporta a **taxa de match**; se for baixa, re-exporta
+> o gabarito da versão correta.
+>
+> Limitação conhecida: o export da UI **não inclui perguntas de associação** (`match`)
+> — essas ficam sem chave e vão para revisão manual.
 
 ---
 
@@ -90,12 +103,43 @@ ou `--label`): `raw_exam_config_<ts>.json`, `exam_config_as_is_<ts>.csv` **e** `
 
 > Este passo **não** faz chamadas à API (só lê o XLSX).
 
-### Passo 4 — Entrega à validação (fora deste projeto)
+### Passo 4 — Reconciliação determinística (`reconcile`)
 
-Entrega os três CSVs (`submissions_export`, `course_grades`, `exam_config_as_is`) à
-fase de validação. É lá que se cruza nota oficial × pontos extraídos × gabarito para
-detetar perguntas mal parametrizadas ou avaliações inesperadas. **Este projeto não
-faz essa comparação.**
+Junta as fontes da pasta e aplica regras **exatas** (sem API, sem LLM):
+
+```bash
+python -m reconcile.run_reconcile --label "titulo-da-atividade"
+# nota oficial opcional a partir das course_grades:
+python -m reconcile.run_reconcile --label "titulo-da-atividade" \
+    --grades-csv output/course_<slug>/course_grades_<ts>.csv
+```
+
+O que faz:
+- **Reconciliação de notas:** `grade` (oficial) vs `round(Σpoints/Σmax × 100)`,
+  soma em `Decimal`. (A `grade` da LearnWorlds é **percentagem**, não pontos.)
+- **Regra de contradição** por (aluno, pergunta): `answer_accepted_but_zero`
+  (respondeu certo mas 0 pontos) e `answer_not_accepted_but_full` (respondeu errado
+  mas nota máxima) — o detetor de "avaliação inesperada". Crédito parcial é informativo.
+- **Coerência entre alunos:** mesma pergunta + mesma resposta com **pontos diferentes**
+  → `inconsistent_scoring` (não precisa de gabarito).
+- **Fila de revisão manual deduplicada:** 1 linha por pergunta **sem chave**
+  (`match`, `mcma` ambíguo, sem chave) — com a distribuição de respostas/pontos dos
+  alunos, para rever a parametrização **uma vez**.
+- **Cobertura honesta:** reporta `yes / no_config_match / no_answer_key / unverifiable_mcma`.
+
+Produz, em `output/<titulo-da-atividade>/reconcile/` (CSV **e** XLSX + summary JSON):
+- `reconciliation_report` — 1 linha por (aluno, pergunta), com `flag`
+- `grade_reconciliation` — nota oficial vs derivada, por aluno
+- `consistency_report` — respostas iguais pontuadas de forma diferente
+- `manual_review_queue` — perguntas a rever (deduplicadas)
+- `reconciliation_summary_<ts>.json` — contagens e *flags*
+
+### Passo 5 — Revisão e decisão (humano / fase externa)
+
+A reconciliação **assinala**, não decide. A revisão das perguntas levantadas
+(parametrização, contradições, `match` sem chave) é feita por uma pessoa. Um eventual
+passo de juízo semântico (ex.: LLM sobre casos ambíguos, com pseudonimização) fica
+**fora** deste projeto.
 
 ---
 
@@ -106,6 +150,8 @@ Tudo em `output/`, sempre com timestamp (CSV **e** XLSX), **nunca sobrescrito**:
 ```
 output/
   <titulo-da-atividade>/   submissions_export(.csv/.xlsx), exam_config_as_is(.csv/.xlsx), raw_*, report
+    reconcile/             reconciliation_report, grade_reconciliation,
+                           consistency_report, manual_review_queue (.csv/.xlsx) + summary.json
   course_<course_slug>/    course_grades(.csv/.xlsx), raw_grades, report
 ```
 
@@ -124,4 +170,11 @@ Sem `--label`, o Passo 1 usa o id do assessment.
 - **Overflow do export da UI:** perguntas com >5 opções (ex.: preenchimento com muitas
   variantes aceites) transbordam para colunas sem cabeçalho; o importer trata isto e
   preserva tudo em `row_raw`.
+- **`grade` é percentagem** (`Σpoints/Σmax × 100`), não pontos — confirmado nos dados.
+- **Matching robusto a formatação:** a API e o export diferem em pontuação/espaços
+  (ex.: vírgula vs travessão); a comparação usa uma normalização alfanumérica para
+  não gerar falsos positivos.
+- **Multi-resposta (`mcma`):** vem como opções **concatenadas sem delimitador**; o
+  `reconcile` reconstrói o conjunto selecionado por **contenção** das opções conhecidas
+  (com guard de ambiguidade → `unverifiable_mcma`).
 - Detalhe técnico de colunas e endpoints: ver [`extractor/README.md`](extractor/README.md).

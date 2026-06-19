@@ -2,17 +2,22 @@
 
 Internal tool for the **Nova SBE Executive Education LMS team**.
 
-> **Two tools live here:**
+> **Three components live here:**
 > 1. **This exporter** (`export_assessment_responses.py`) — the simple **7-column
 >    "teaching view"** (offline/live), documented below.
-> 2. **The extractor** (`extractor/`) — a newer **modular, audit-grade extractor**
->    that produces the **complete** submissions CSV (23 columns, JSON-preserved
->    nested data, derived score status, extraction report) for external validation.
->    See **[`extractor/README.md`](extractor/README.md)**. Run it with:
->    `python -m extractor.run_extract`. The two tools coexist; this one is unchanged.
+> 2. **The extractor** (`extractor/`) — a modular, **audit-grade extractor** that
+>    produces the complete submissions CSV/XLSX (24 columns, JSON-preserved nested
+>    data, `derived_score_status`, username enrichment), plus **course grades** and
+>    the **exam-config** answer key imported from a manual UI export.
+>    See **[`extractor/README.md`](extractor/README.md)**. Run: `python -m extractor.run_extract`.
+> 3. **The reconciler** (`reconcile/`) — a **deterministic** validation phase (no API,
+>    no LLM) that joins the three sources and **flags** discrepancies: grade
+>    reconciliation, answer-key contradictions, cross-student scoring inconsistencies,
+>    and a deduplicated manual-review queue. Run: `python -m reconcile.run_reconcile --label <folder>`.
 >
 > **End-to-end audit process:** see **[`PROCESSO.md`](PROCESSO.md)** for the full
-> step-by-step workflow (submissions + grades + exam-config → validation hand-off).
+> step-by-step workflow (extract → reconcile → human review). The components coexist;
+> this exporter is unchanged.
 
 ---
 
