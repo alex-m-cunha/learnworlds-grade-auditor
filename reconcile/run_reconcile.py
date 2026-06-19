@@ -69,6 +69,120 @@ QUEUE_COLUMNS = [
 ]
 
 
+def _build_summary_md(summary: dict, activity_name: str) -> str:
+    ts = summary.get("run_timestamp", "")
+    sub_rows = summary.get("submission_rows", 0)
+    cfg_q = summary.get("config_questions", 0)
+    ver = summary.get("verifiable_breakdown", {})
+    flags = summary.get("flag_counts", {})
+    grades = summary.get("grade_status_counts", {})
+    inconsistent = summary.get("inconsistent_scoring_questions", 0)
+    queue_n = summary.get("manual_review_questions", 0)
+    outputs = summary.get("outputs", {})
+
+    def _row(label, val):
+        return f"| {label} | {val} |"
+
+    lines = [
+        f"# Reconciliação — {activity_name}",
+        "",
+        f"**Run:** {ts}",
+        f"**Linhas de submissão:** {sub_rows} &nbsp;|&nbsp; **Perguntas no gabarito:** {cfg_q}",
+        "",
+        "---",
+        "",
+        "## Verificabilidade das respostas",
+        "",
+        "| Estado | Respostas |",
+        "|--------|----------:|",
+        _row("Verificável (`yes`)", ver.get("yes", 0)),
+        _row("Sem match no gabarito (`no_config_match`)", ver.get("no_config_match", 0)),
+        _row("Sem chave de resposta (`no_answer_key`)", ver.get("no_answer_key", 0)),
+        _row("Multi-resposta ambíguo (`unverifiable_mcma`)", ver.get("unverifiable_mcma", 0)),
+        "",
+        "---",
+        "",
+        "## Flags de contradição",
+        "",
+    ]
+
+    if flags:
+        lines += [
+            "| Flag | Ocorrências |",
+            "|------|------------:|",
+        ]
+        flag_labels = {
+            "answer_accepted_but_zero": "Resposta aceite mas 0 pontos (`answer_accepted_but_zero`)",
+            "answer_not_accepted_but_full": "Resposta não aceite mas nota máxima (`answer_not_accepted_but_full`)",
+            "answer_accepted_but_partial": "Crédito parcial (`answer_accepted_but_partial`) ℹ️",
+        }
+        for key, flabel in flag_labels.items():
+            if key in flags:
+                lines.append(_row(flabel, flags[key]))
+        for key, val in flags.items():
+            if key not in flag_labels:
+                lines.append(_row(f"`{key}`", val))
+    else:
+        lines.append("Sem flags de contradição. ✅")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "## Reconciliação de notas (por aluno)",
+        "",
+        "| Estado | Alunos |",
+        "|--------|-------:|",
+        _row("Match (`match`)", grades.get("match", 0)),
+        _row("Mismatch (`mismatch`)", grades.get("mismatch", 0)),
+        _row("Sem nota oficial (`grade_unavailable`)", grades.get("grade_unavailable", 0)),
+        "",
+        "---",
+        "",
+        "## Coerência entre alunos",
+        "",
+        (
+            f"Perguntas com a mesma resposta pontuada de forma diferente: **{inconsistent}**"
+            + (" ✅" if inconsistent == 0 else "")
+        ),
+        "",
+        "---",
+        "",
+        "## Fila de revisão manual",
+        "",
+        (
+            f"Perguntas a rever (deduplicadas): **{queue_n}**"
+            + (" ✅" if queue_n == 0 else "")
+        ),
+        "",
+        "---",
+        "",
+        "## Outputs",
+        "",
+    ]
+
+    output_labels = {
+        "reconciliation_report": "Relatório completo (1 linha por aluno × pergunta)",
+        "grade_reconciliation": "Reconciliação de notas (1 linha por aluno)",
+        "consistency_report": "Coerência entre alunos",
+        "manual_review_queue": "Fila de revisão manual (deduplicada)",
+    }
+    for stem, info in outputs.items():
+        n = info.get("rows", 0)
+        olabel = output_labels.get(stem, stem)
+        lines.append(f"- `{stem}/` — {olabel}: **{n}** linha(s)")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "> ℹ️ `answer_accepted_but_partial` é informativo (crédito parcial configurado), não uma contradição.",
+        "> Flags determinísticos — sem API, sem LLM.",
+    ]
+
+    return "\n".join(lines) + "\n"
+
+
 def _latest(folder: Path, stem: str):
     """Find the most recently modified <stem>.csv inside any timestamped sub-run."""
     # New layout: folder/<ts>/<stem>.csv
@@ -295,6 +409,9 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
     summary_path = reconcile_dir / "reconciliation_summary.json"
     with summary_path.open("w", encoding="utf-8") as h:
         json.dump(summary, h, ensure_ascii=False, indent=2)
+
+    md_path = reconcile_dir / "reconciliation_summary.md"
+    md_path.write_text(_build_summary_md(summary, label or run_folder.parent.name), encoding="utf-8")
 
     # ---- console summary ----
     print(f"\nVerifiable: {dict(verifiable_counts)}")
