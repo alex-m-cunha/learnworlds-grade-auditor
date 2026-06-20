@@ -54,7 +54,7 @@ os valores do `assessment.cfg` — basta confirmar com OK se estiverem corretos.
 | **[2/6]** | Atividade | Título/label (ex: `uc5-fintech`) |
 | **[3/6]** | Assessment ID | ID de 24 chars do URL do admin LW |
 | **[4/6]** | Gabarito LW | Selecionar o XLSX exportado da UI → copia+renomeia para `input/` → corre submissões (API) + importação do gabarito |
-| **[5/6]** | Guião Word | Sim/Não → se Sim: selecionar 1 ou mais .docx (Cmd+clique para múltiplos) → copia+renomeia para `input/` → extrai respostas via OpenAI |
+| **[5/6]** | Guião Word | Sim/Não → se Sim: selecionar 1 ou mais .docx (Cmd+clique para múltiplos) → copia+renomeia para `input/` → **Fase 1**: extrai respostas para perguntas com opções LW → `manual_answer_key.csv`; **Fase 2** (automática): infere respostas para lacunas e correspondência (sem opções LW) → `inferred_answer_key.csv` |
 | **[6/6]** | Reconciliação | Sim/Não → se Sim: reconcilia submissões com gabarito e gera relatórios |
 | **[6b/6]** | Interpretação IA | Automático após Passo 6 → chama OpenAI e escreve `audit_interpretation.md` na raiz da run |
 
@@ -89,8 +89,8 @@ os valores do `assessment.cfg` — basta confirmar com OK se estiverem corretos.
 | `extractor/config.py` | Carrega configuração de `assessment.cfg` + `.env`, define `resolve_step_dir()`. |
 | `reconcile/` | Pacote Python com o reconciliador determinístico. |
 | `reconcile/run_reconcile.py` | Junta submissões + gabarito, aplica regras de auditoria, gera relatórios. |
-| `reconcile/core.py` | Lógica de negócio: `check_answer()`, `reconcile_grade()`, `join_key()`, `norm()`. |
-| `tools/extract_answer_key.py` | Extrai respostas corretas de ficheiros Word via OpenAI e cruza com o gabarito LW. |
+| `reconcile/core.py` | Lógica de negócio: `check_answer()`, `check_inferred_answer()`, `reconcile_grade()`, `join_key()`. |
+| `tools/extract_answer_key.py` | **Fase 1:** extrai respostas de ficheiros Word via OpenAI e cruza com o gabarito LW → `manual_answer_key.csv`. **Fase 2:** infere respostas para lacunas e correspondência (sem gabarito LW) → `inferred_answer_key.csv`. |
 | `tools/interpret_run.py` | Gera `audit_interpretation.md` — interpretação IA da auditoria em Português. Corre automaticamente após o Passo 6. |
 
 ### Pastas de dados (não estão no git)
@@ -123,7 +123,8 @@ output/
           exam_config_as_is.csv       gabarito LW: respostas corretas + opções
           exam_config_as_is.xlsx
         answer_key/                   só se o Passo 5 (Word) foi corrido
-          manual_answer_key.csv       gabarito docente extraído via LLM
+          manual_answer_key.csv       gabarito docente — perguntas com opções LW (Fase 1)
+          inferred_answer_key.csv     respostas inferidas — lacunas/correspondência (Fase 2)
         reconcile/                    só se o Passo 6 foi corrido
           reconciliation_report/
             reconciliation_report.csv     1 linha por (aluno × pergunta)
