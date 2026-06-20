@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .client import LearnWorldsClient
-from .config import OUTPUT_DIR, ExtractorError, load_config, slugify
+from .config import OUTPUT_DIR, ExtractorError, load_config, resolve_step_dir, slugify
 from .report import build_report
 from .submissions import (
     SUBMISSION_COLUMNS,
@@ -66,6 +66,7 @@ def run(
     from_raw: str | None = None,
     label: str | None = None,
     resolve_users: bool = True,
+    run_dir: str | None = None,
 ) -> int:
     run_ts = _timestamp()
     extraction_iso = datetime.now().isoformat(timespec="seconds")
@@ -110,9 +111,8 @@ def run(
                 client, [s.get("user_id") for s in data if isinstance(s, dict)]
             )
 
-    # Folder: output/<label>/<timestamp>/
-    folder = slugify(label) if label else str(assessment_id)
-    out_dir = OUTPUT_DIR / folder / run_ts
+    # Step folder: <run-dir>/submissions/ or output/<program>/<label>/<ts>/submissions/
+    out_dir = resolve_step_dir(run_dir, "submissions", run_ts, config, label or "", assessment_id or "")
     raw_dir = out_dir / "raw"
 
     # Raw-first: always persist the raw payload before transforming.
@@ -200,6 +200,11 @@ def _parse_args(argv):
         help="Skip the per-user lookup that fills the 'username' column "
         "(faster; username stays blank).",
     )
+    parser.add_argument(
+        "--run-dir",
+        help="Shared run folder created by the unified launcher. When set, "
+        "output goes to <run-dir>/submissions/ and no new timestamp is created.",
+    )
     return parser.parse_args(argv)
 
 
@@ -219,6 +224,7 @@ def main(argv=None) -> int:
             from_raw=args.from_raw,
             label=args.label,
             resolve_users=not args.no_usernames,
+            run_dir=args.run_dir,
         )
     except ExtractorError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)

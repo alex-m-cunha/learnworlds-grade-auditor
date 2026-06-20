@@ -27,7 +27,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .config import OUTPUT_DIR, ExtractorError, load_config, slugify
+from .config import OUTPUT_DIR, ExtractorError, load_config, resolve_step_dir, slugify
 from .exam_config import EXAM_CONFIG_COLUMNS, parse_exam_config_xlsx, title_from_filename
 from .report import build_exam_config_report
 from .writers import save_raw_response, write_csv, write_report, write_xlsx
@@ -43,6 +43,7 @@ def run(
     assessment_title: str = "",
     course_id: str = "",
     label: str = "",
+    run_dir: str = "",
 ) -> int:
     run_ts = _timestamp()
     extraction_iso = datetime.now().isoformat(timespec="seconds")
@@ -67,9 +68,13 @@ def run(
         extraction_timestamp=extraction_iso,
     )
 
-    # Output folder: output/<label>/<timestamp>/
-    folder = slugify(label) if label else slugify(title)
-    out_dir = OUTPUT_DIR / folder / run_ts
+    config = {}
+    try:
+        from .config import load_config as _lc
+        config = _lc(require_live=False)
+    except Exception:
+        pass
+    out_dir = resolve_step_dir(run_dir or "", "exam_config", run_ts, config, label or slugify(title))
     raw_dir = out_dir / "raw"
 
     # Raw-first: persist the faithful parsed rows before the normalized CSV.
@@ -133,6 +138,11 @@ def _parse_args(argv):
         help="Override the output folder name (default: a slug of the title). "
         "Use the same --label as run_extract to co-locate outputs.",
     )
+    parser.add_argument(
+        "--run-dir",
+        default="",
+        help="Shared run folder from the unified launcher. Output goes to <run-dir>/exam_config/.",
+    )
     return parser.parse_args(argv)
 
 
@@ -151,6 +161,7 @@ def main(argv=None) -> int:
             assessment_title=args.assessment_title,
             course_id=args.course_id,
             label=args.label,
+            run_dir=args.run_dir,
         )
     except ExtractorError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)

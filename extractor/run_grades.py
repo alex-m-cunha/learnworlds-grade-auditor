@@ -26,7 +26,7 @@ import sys
 from datetime import datetime
 
 from .client import LearnWorldsClient
-from .config import OUTPUT_DIR, ExtractorError, load_config, slugify
+from .config import OUTPUT_DIR, ExtractorError, load_config, resolve_step_dir, slugify
 from .grades import GRADE_COLUMNS, flatten_grades, get_course_grades
 from .report import build_grades_report
 from .users import resolve_usernames
@@ -41,6 +41,7 @@ def run(
     course_id: str | None = None,
     label: str | None = None,
     resolve_users: bool = True,
+    run_dir: str | None = None,
 ) -> int:
     run_ts = _timestamp()
     extraction_iso = datetime.now().isoformat(timespec="seconds")
@@ -88,7 +89,7 @@ def run(
         )
 
     folder = slugify(label) if label else f"course_{slugify(course_id)}"
-    out_dir = OUTPUT_DIR / folder / run_ts
+    out_dir = resolve_step_dir(run_dir or "", "grades", run_ts, config, folder)
     raw_dir = out_dir / "raw"
 
     raw_file = save_raw_response(
@@ -156,6 +157,10 @@ def _parse_args(argv):
         action="store_true",
         help="Skip the per-user lookup that fills the 'username' column.",
     )
+    parser.add_argument(
+        "--run-dir",
+        help="Shared run folder from the unified launcher. Output goes to <run-dir>/grades/.",
+    )
     return parser.parse_args(argv)
 
 
@@ -172,6 +177,7 @@ def main(argv=None) -> int:
             course_id=args.course_id,
             label=args.label,
             resolve_users=not args.no_usernames,
+            run_dir=args.run_dir,
         )
     except ExtractorError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)
