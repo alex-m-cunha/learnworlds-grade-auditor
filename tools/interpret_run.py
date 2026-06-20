@@ -66,7 +66,7 @@ REGRAS SOBRE OS DADOS:
 - `answer_key_real_discrepancies`: Gabarito LW e Gabarito ID / Docente divergem — PROBLEMA REAL.
 - `answer_key_doc_not_found`: pergunta não encontrada no Gabarito ID / Docente — o Gabarito LW
   está correcto, mas não há validação cruzada do docente para esta pergunta.
-- Tabela de acções: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
+- Next steps: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
 
 FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
@@ -151,18 +151,12 @@ ATENÇÃO: existem 2 situações DISTINTAS — não misturar. NÃO escrever os n
 
 Sem jargão técnico em nenhuma das entradas.]
 
-### Sugestões de melhoria
-[2-4 bullets em linguagem acessível para docentes e coordenadores. PROIBIDO usar: "export",
-"blockType", "fillInTheBlankBlock", "match", "API", "CSV", "flag", "config", "LLM".
-Exemplos de linguagem correcta: "perguntas de preenchimento de espaço", "perguntas de
-correspondência", "plataforma LearnWorlds", "Gabarito ID / Docente".]
-
 ---
 
-## Tabela de acções
+## Next steps
 
-| Prioridade | Acção | Responsável | Prazo sugerido |
-|------------|-------|-------------|---------------|
+| Prioridade | Acção |
+|------------|-------|
 [mínimo 1 linha por problema ⚠️; 1 linha por limitação accionável]
 
 ---

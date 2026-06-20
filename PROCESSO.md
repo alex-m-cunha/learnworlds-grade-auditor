@@ -185,7 +185,7 @@ O que produz — `audit_interpretation.md` (na raiz da pasta de run):
 - **✅ O que correu bem** — pontos positivos
 - **⚠️ Problemas a corrigir** — flags com nomes de alunos, respostas concretas, acção sugerida
 - **ℹ️ Informação relevante** — limitações de auditabilidade, contexto metodológico
-- **Tabela de acções** — prioridade (🔴🟡🔵), acção, responsável, prazo sugerido
+- **Next steps** — prioridade (🔴🟡🔵) e acção a tomar
 
 > Se `OPENAI_API_KEY` não estiver configurada em `.env`, este passo é ignorado sem erro.
 > Pode também correr manualmente:
