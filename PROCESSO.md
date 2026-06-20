@@ -342,12 +342,31 @@ input/
 
 A reconciliação **assinala**, não decide. Após correr:
 
-1. Abrir `reconciliation_summary.md` para o sumário
-2. Rever `manual_review_queue.csv` — perguntas sem gabarito, ambíguas, ou com inferência de baixa confiança
-3. Rever `reconciliation_report.csv` filtrando `flag != ""` — contradições pontuação/gabarito
-4. Se o Passo [5/6] foi corrido:
+1. Abrir `audit_interpretation.md` — ponto de entrada principal; lista todos os problemas por ordem de gravidade e os próximos passos
+2. Rever `reconciliation_report.csv` filtrando `flag != ""` — contradições pontuação/gabarito
+3. Se o Passo [5/6] foi corrido:
    - Rever `manual_answer_key.csv` filtrando `needs_review=true` ou `answers_match=no` — discrepâncias entre o gabarito LW e a intenção do docente
-   - Rever `inferred_answer_key.csv` — confirmar as respostas inferidas para lacunas e correspondência antes de as aceitar como definitivas
+   - **Confirmar as respostas inferidas** (ver secção abaixo)
+
+### Confirmar respostas inferidas (lacunas e correspondência)
+
+As perguntas de preenchimento de lacunas e de correspondência não têm gabarito no LW — a resposta foi inferida automaticamente a partir do guião Word. O processo de confirmação é simples:
+
+1. Em `audit_interpretation.md`, ler a secção **"Perguntas sem gabarito disponível / Resposta inferida automaticamente"**
+2. Para cada pergunta listada, comparar a resposta inferida com o que o docente escreveu no guião Word
+3. **Se estiver correcta** → as notas para essa pergunta estão boas; nenhuma acção necessária
+4. **Se faltar uma variante** (ex: um aluno escreveu uma formulação válida que não está nas variantes listadas):
+   - Abrir `answer_key/inferred_answer_key.csv` na pasta da run
+   - Adicionar a variante em falta no campo `doc_correct_answer` da pergunta (separar por `"; "` dentro da mesma lacuna, `" | "` entre lacunas)
+   - Re-correr a reconciliação: `python -m reconcile.run_reconcile --run-dir <pasta da run>`
+   - Re-gerar a interpretação: `python tools/interpret_run.py --run-dir <pasta da run>`
+
+### Casos de "resposta correcta com texto a mais"
+
+Se o `audit_interpretation.md` listar alunos em **"Resposta correcta com texto a mais — rejeitada pelo LearnWorlds"**, significa que o sistema detectou que o aluno escreveu a resposta certa mas com texto adicional (ex: deu o nome em inglês e português na mesma lacuna). O LearnWorlds exige correspondência exacta e rejeitou. Para cada caso:
+
+- **Se o aluno merece crédito** → corrigir manualmente a nota no LearnWorlds
+- **Se a resposta é genuinamente diferente** (o texto a mais muda o significado) → dispensar; a nota fica como está
 
 ---
 
