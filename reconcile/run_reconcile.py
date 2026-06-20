@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 """Deterministic reconciler orchestrator.
 
-Usage:
-    python -m reconcile.run_reconcile --label <activity-folder>
-    python -m reconcile.run_reconcile --assessment-dir output/<label>
-    python -m reconcile.run_reconcile --label <x> --grades-csv output/course_<slug>/<ts>/course_grades.csv
+Preferred usage (unified launcher — shared run folder):
+    python -m reconcile.run_reconcile --run-dir output/<program>/<label>/<ts>
 
-Reads the latest submissions_export.csv and exam_config_as_is.csv from the
-assessment folder (inside any timestamped sub-run), applies the deterministic
-rules, and writes the reports to <run_folder>/reconcile/. No API call, no LLM.
+Manual CLI (point at a timestamped run folder directly):
+    python -m reconcile.run_reconcile --assessment-dir output/<program>/<label>
 
-Output layout:
-    output/<label>/
-      <YYYY-MM-DD_HHmmss>/          <- the run that produced the inputs
-        reconcile/
-          reconciliation_report/
-            reconciliation_report.csv
-            reconciliation_report.xlsx
-          grade_reconciliation/
-            grade_reconciliation.csv
-            grade_reconciliation.xlsx
-          consistency_report/
-            consistency_report.csv
-            consistency_report.xlsx
-          manual_review_queue/
-            manual_review_queue.csv
-            manual_review_queue.xlsx
-          reconciliation_summary.json
+Reads submissions_export.csv and exam_config_as_is.csv, applies deterministic
+rules, and writes reports to <run-dir>/reconcile/. No API call, no LLM.
+
+Output layout (inside the shared run folder):
+    <run-dir>/
+      reconcile/
+        reconciliation_report/
+          reconciliation_report.csv
+          reconciliation_report.xlsx
+        grade_reconciliation/
+          grade_reconciliation.csv
+          grade_reconciliation.xlsx
+        consistency_report/
+          consistency_report.csv
+          consistency_report.xlsx
+        manual_review_queue/
+          manual_review_queue.csv
+          manual_review_queue.xlsx
+        reconciliation_summary.json
+        reconciliation_summary.md
+
+Note on --label: resolves to output/<label>/ (single level). With the current
+output structure (output/<program>/<label>/), prefer --assessment-dir or --run-dir.
 """
 
 from __future__ import annotations
@@ -184,15 +187,26 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
 
 
 def _latest(folder: Path, stem: str):
-    """Find the most recently modified <stem>.csv inside any timestamped sub-run."""
-    # New layout: folder/<ts>/<stem>.csv
+    """Find the most recently modified <stem>.csv inside any timestamped sub-run.
+
+    Searches new layout first (folder/<ts>/<step>/<stem>.csv), then the previous
+    flat layout (folder/<ts>/<stem>.csv), then the legacy timestamped-filename layout.
+    """
+    # Current layout: folder/<ts>/<step_name>/<stem>.csv
+    files = sorted(
+        glob.glob(str(folder / "*" / "*" / f"{stem}.csv")),
+        key=os.path.getmtime,
+    )
+    if files:
+        return files[-1]
+    # Previous layout: folder/<ts>/<stem>.csv
     files = sorted(
         glob.glob(str(folder / "*" / f"{stem}.csv")),
         key=os.path.getmtime,
     )
     if files:
         return files[-1]
-    # Fallback: old layout with timestamp in filename (folder/<stem>_<ts>.csv)
+    # Legacy: folder/<stem>_<ts>.csv
     files = sorted(
         glob.glob(str(folder / f"{stem}_*.csv")),
         key=os.path.getmtime,
@@ -211,30 +225,60 @@ def _resolve_dir(label: str | None, assessment_dir: str | None) -> Path:
         p = Path(assessment_dir)
         return p if p.is_absolute() else Path.cwd() / p
     if label:
+        # Support both output/<label>/ and output/<program>/<label>/ layouts.
+        # Try reading program from assessment.cfg; fall back to flat layout.
+        try:
+            from extractor.config import _load_cfg_file, PROJECT_ROOT
+            cfg = _load_cfg_file(PROJECT_ROOT / "assessment.cfg")
+            program = (cfg.get("PROGRAM") or "").strip()
+            if program:
+                candidate = OUTPUT_DIR / slugify(program) / slugify(label)
+                if candidate.exists():
+                    return candidate
+        except Exception:
+            pass
         return OUTPUT_DIR / slugify(label)
     raise ExtractorError("Provide --label <folder> or --assessment-dir <path>.")
 
 
-def run(label=None, assessment_dir=None, grades_csv=None) -> int:
-    folder = _resolve_dir(label, assessment_dir)
-    if not folder.exists():
-        raise ExtractorError(f"Assessment folder not found: {folder}")
+def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
+    if run_dir:
+        # Unified launcher path: all inputs are in fixed step subfolders.
+        rd = Path(run_dir)
+        sub_path = str(rd / "submissions" / "submissions_export.csv")
+        cfg_path = str(rd / "exam_config" / "exam_config_as_is.csv")
+        if not Path(sub_path).exists():
+            raise ExtractorError(f"submissions_export.csv not found at: {sub_path}")
+        if not Path(cfg_path).exists():
+            raise ExtractorError(f"exam_config_as_is.csv not found at: {cfg_path}")
+        # If not explicitly provided, look for grades in the run-dir grades step.
+        if not grades_csv:
+            candidate = rd / "grades" / "course_grades.csv"
+            if candidate.exists():
+                grades_csv = str(candidate)
+        reconcile_dir = rd / "reconcile"
+        folder = rd  # used only for display
+    else:
+        folder = _resolve_dir(label, assessment_dir)
+        if not folder.exists():
+            raise ExtractorError(f"Assessment folder not found: {folder}")
 
-    sub_path = _latest(folder, "submissions_export")
-    cfg_path = _latest(folder, "exam_config_as_is")
-    if not sub_path:
-        raise ExtractorError(f"No submissions_export.csv found under {folder}")
-    if not cfg_path:
-        raise ExtractorError(
-            f"No exam_config_as_is.csv found under {folder} "
-            "(run run_exam_config first)."
-        )
+        sub_path = _latest(folder, "submissions_export")
+        cfg_path = _latest(folder, "exam_config_as_is")
+        if not sub_path:
+            raise ExtractorError(f"No submissions_export.csv found under {folder}")
+        if not cfg_path:
+            raise ExtractorError(
+                f"No exam_config_as_is.csv found under {folder} "
+                "(run run_exam_config first)."
+            )
 
-    # Write reconcile output alongside the inputs that produced it.
-    run_folder = Path(sub_path).parent
-    # If sub_path is in a raw/ subfolder (shouldn't happen but guard), step up.
-    if run_folder.name == "raw":
-        run_folder = run_folder.parent
+        # Write reconcile output alongside the inputs that produced it.
+        run_folder = Path(sub_path).parent
+        # If sub_path is in a raw/ subfolder (shouldn't happen but guard), step up.
+        if run_folder.name == "raw":
+            run_folder = run_folder.parent
+        reconcile_dir = run_folder / "reconcile"
 
     submissions = _read_csv(sub_path)
     exam_config = _read_csv(cfg_path)
@@ -366,7 +410,6 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
 
     # ---- write outputs ----
     # Each report gets its own subfolder; summary JSON stays at reconcile/ root.
-    reconcile_dir = run_folder / "reconcile"
     reconcile_dir.mkdir(parents=True, exist_ok=True)
 
     outputs = {}
@@ -389,7 +432,7 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         "tool": "learnworlds-reconcile",
         "run_timestamp": datetime.now().isoformat(timespec="seconds"),
         "assessment_folder": str(folder),
-        "run_folder": str(run_folder),
+        "reconcile_dir": str(reconcile_dir),
         "inputs": {"submissions": os.path.basename(sub_path),
                    "exam_config": os.path.basename(cfg_path)},
         "submission_rows": len(submissions),
@@ -411,7 +454,8 @@ def run(label=None, assessment_dir=None, grades_csv=None) -> int:
         json.dump(summary, h, ensure_ascii=False, indent=2)
 
     md_path = reconcile_dir / "reconciliation_summary.md"
-    md_path.write_text(_build_summary_md(summary, label or run_folder.parent.name), encoding="utf-8")
+    activity_name = label or (Path(run_dir).name if run_dir else reconcile_dir.parent.parent.name)
+    md_path.write_text(_build_summary_md(summary, activity_name), encoding="utf-8")
 
     # ---- console summary ----
     print(f"\nVerifiable: {dict(verifiable_counts)}")
@@ -430,6 +474,12 @@ def _parse_args(argv):
     p.add_argument("--label", help="Activity folder name under output/.")
     p.add_argument("--assessment-dir", help="Path to the assessment output folder.")
     p.add_argument("--grades-csv", help="Optional course_grades CSV for the official grade.")
+    p.add_argument(
+        "--run-dir",
+        help="Shared run folder from the unified launcher. When set, inputs are read "
+        "from <run-dir>/submissions/ and <run-dir>/exam_config/; output goes to "
+        "<run-dir>/reconcile/.",
+    )
     return p.parse_args(argv)
 
 
@@ -437,7 +487,7 @@ def main(argv=None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     try:
         return run(label=args.label, assessment_dir=args.assessment_dir,
-                   grades_csv=args.grades_csv)
+                   grades_csv=args.grades_csv, run_dir=args.run_dir)
     except ExtractorError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)
         return 1
