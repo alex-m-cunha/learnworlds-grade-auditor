@@ -119,6 +119,7 @@ def load_config(require_live: bool = True) -> dict:
         "label": _get("LABEL"),
         "program": _get("PROGRAM"),
         "label_display": _get("LABEL_DISPLAY"),
+        "epoca": _get("EPOCA") or "Normal",
     }
 
     if require_live:

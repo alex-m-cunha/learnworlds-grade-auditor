@@ -90,6 +90,7 @@ FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 # Interpretação da auditoria — [label_display] ([program_display])
 
 **Tipo:** Teste de Avaliação
+**Época:** [epoca]
 **Run:** [run_timestamp]
 **Alunos:** [n_students] | **Perguntas do teste:** [active_questions_count] | **Linhas de submissão:** [submission_rows]
 
@@ -185,13 +186,15 @@ independente — não inferir a partir de outras. Usar `problems_checklist` no c
 
 ---
 
-## 🔍 Perguntas inferidas — confirmação necessária
+## [Se inferred_reviewed=false: "🔍 Perguntas inferidas — confirmação necessária"][Se inferred_reviewed=true: "✅ Perguntas inferidas — revistas manualmente"]
 
 [Se `inferred_questions_detail` vazio: omitir esta secção inteira.]
-[Se não vazio:]
+[Se não vazio e inferred_reviewed=false:]
 Estas perguntas não têm gabarito no LearnWorlds. A resposta correcta foi inferida
 automaticamente a partir do gabarito ID / Docente e usada na reconciliação. Requerem
 confirmação humana antes de qualquer decisão sobre notas.
+[Se não vazio e inferred_reviewed=true:]
+As respostas inferidas foram confirmadas manualmente. Registo para referência:
 
 [Para cada entrada em `inferred_questions_detail`:]
 - **(sem número atribuído)**: "[question_text primeiros 150 chars]"
@@ -227,8 +230,8 @@ confirmação humana antes de qualquer decisão sobre notas.
 [🔴 Se over_answered_flags:] | 🔴 | Corrigir parametrização no LearnWorlds para aceitar as variantes de resposta correcta rejeitadas por texto adicional |
 [🔴 Se flagged_rows com zero-score:] | 🔴 | Investigar e corrigir pontuação zero para as respostas correctas identificadas |
 [🟡 Se not_accepted_but_full_flags:] | 🟡 | Verificar se as respostas com pontuação completa mas não reconhecidas pelo gabarito são válidas; se sim, actualizar o gabarito |
-[🔵 Se inferred_questions_detail:] | 🔵 | Confirmar manualmente as [N] perguntas inferidas: comparar a resposta inferida com o gabarito ID / Docente original |
-[🔵 Se inferred_questions_detail e confirmadas:] | 🔵 | Uma vez confirmadas as inferências, cruzar os resultados da reconciliação com a tabela de revisão para validar notas |
+[🔵 Se inferred_questions_detail e inferred_reviewed=false:] | 🔵 | Confirmar manualmente as [N] perguntas inferidas: comparar a resposta inferida com o gabarito ID / Docente original |
+[🔵 Se inferred_questions_detail e inferred_reviewed=true:] | 🔵 | Inferências já confirmadas — cruzar os resultados da reconciliação com a tabela de revisão para validar notas |
 [🔵 Se answer_key_doc_not_found:] | 🔵 | Verificar as [N] perguntas presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente |
 
 ---
@@ -524,12 +527,18 @@ def _build_context(run_dir: Path) -> dict:
     # time) so the label is always correct even when assessment.cfg has since changed.
     # Fall back to path-slug derivation for older runs without run_meta.cfg.
     _cfg_display = ""
+    epoca = "Normal"
+    inferred_reviewed = False
     run_meta_path = run_dir / "run_meta.cfg"
     if run_meta_path.exists():
         for _line in run_meta_path.read_text(encoding="utf-8").splitlines():
             _line = _line.strip()
             if _line.startswith("LABEL_DISPLAY="):
                 _cfg_display = _line.partition("=")[2].strip().strip('"').strip("'")
+            elif _line.startswith("EPOCA="):
+                epoca = _line.partition("=")[2].strip().strip('"').strip("'") or "Normal"
+            elif _line.startswith("INFERRED_REVIEWED="):
+                inferred_reviewed = _line.partition("=")[2].strip().lower() == "true"
                 break
     if _cfg_display:
         label_display = _cfg_display
@@ -604,6 +613,8 @@ def _build_context(run_dir: Path) -> dict:
         "program_display": program.upper(),
         "label": label,
         "label_display": label_display,
+        "epoca": epoca,
+        "inferred_reviewed": inferred_reviewed,
         "run_timestamp": summary.get("run_timestamp", timestamp),
         # Counts
         "submission_rows": total_rows,

@@ -123,7 +123,8 @@ def run(
         run_meta_path.write_text(
             f"PROGRAM={config.get('program', '')}\n"
             f"LABEL={label or config.get('label', '')}\n"
-            f"LABEL_DISPLAY={config.get('label_display', '')}\n",
+            f"LABEL_DISPLAY={config.get('label_display', '')}\n"
+            f"EPOCA={config.get('epoca', 'Normal')}\n",
             encoding="utf-8",
         )
 
