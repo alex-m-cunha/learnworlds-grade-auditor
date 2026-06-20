@@ -50,67 +50,85 @@ REGRAS:
 - Sê concreto e sintético: menciona nomes de alunos, números de pergunta e enunciados quando
   disponíveis; evita generalidades.
 - Não inventes dados. Só incluis afirmações suportadas pelos dados.
-- `no_config_match`: tipos fillInTheBlankBlock e match — o LW NÃO exporta o gabarito destas
-  perguntas. É uma limitação da plataforma, NÃO um erro de configuração.
-- `answer_accepted_but_zero`: resposta aceite pelo gabarito mas 0 pontos atribuídos — PROBLEMA
-  REAL que requer correcção imediata.
-- `answer_key_real_discrepancies`: ambas as fontes têm resposta mas diferem — PROBLEMA REAL.
-- `answer_key_doc_not_found`: o LLM não encontrou a questão no documento Word — o gabarito LW
-  está provavelmente correcto; apenas não existe cross-check docente.
+- `no_config_match` / `unverifiable_questions`: tipos fillInTheBlankBlock e match — o LW NÃO
+  exporta o gabarito destes tipos. É uma limitação da plataforma, NÃO um erro de configuração.
+- `answer_accepted_but_zero`: a resposta do aluno é CORRECTA segundo o gabarito mas foram
+  atribuídos 0 pontos — PROBLEMA REAL que requer correcção imediata.
+- `answer_key_real_discrepancies`: ambas as fontes (LW e Word docente) têm resposta mas diferem
+  — PROBLEMA REAL.
+- `answer_key_doc_not_found`: o LLM não encontrou a questão no documento Word (p.ex. estava
+  numa tabela não reconhecida) — o gabarito LW está provavelmente correcto; apenas não existe
+  cross-check docente para essa pergunta.
 - Para a tabela de acções: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
-- Usa `active_questions_count` para referir o número de perguntas do teste, não
-  `exam_config_count`.
+- Usa `active_questions_count` para referir o número total de perguntas do teste.
 
-FORMATO DE OUTPUT (Markdown exacto):
+FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
 # Interpretação da auditoria — [label legível] ([programa])
 
 **Tipo:** Teste de Avaliação
 **Run:** [run_timestamp]
-**Alunos:** [n] | **Perguntas do teste:** [active_questions_count] | **Linhas de submissão:** [submission_rows]
+**Alunos:** [n_students] | **Perguntas do teste:** [active_questions_count] | **Linhas de submissão:** [submission_rows]
 
 ---
 
 ## Resumo executivo
 
-[2-3 parágrafos: o que é este teste, o que a auditoria fez, nível de confiança geral]
+[2-3 parágrafos: o que é este teste, o que a auditoria cobriu, nível de confiança geral]
 
 ---
 
 ## Pipeline de auditoria
 
 ### Extração de submissões (API)
-[estado + contagens: submissions, alunos, linhas]
+[1-2 linhas: estado + contagens de alunos e linhas de resposta]
 
 ### Importação do gabarito LW (XLSX)
-[estado + contagens: perguntas exportadas, tipos presentes]
+[1-2 linhas: referir quantas perguntas foram exportadas com gabarito verificável pelo sistema,
+e quantas perguntas do teste ficaram fora do export por limitação do LW (os tipos
+fillInTheBlankBlock/match). NÃO listar os blockTypes.]
 
 ### Gabarito docente (Word → LLM)
-[estado + contagens de confiança. Se não correu, dizer "Não executado nesta corrida."]
+[Se não correu: "Não executado nesta corrida."
+Se correu:
+- Cobertura esperada vs real: `expected_answer_key_count` perguntas esperadas,
+  quantas com confiança alta/média/baixa, quantas unmatched.
+- Se houver questões unmatched (`answer_key_doc_not_found`): listá-las EXPLICITAMENTE com
+  número e enunciado (primeiros 100 chars).
+- Se `answer_key_matched_count` < `expected_answer_key_count`: ADVERTÊNCIA destacada.]
 
 ### Reconciliação de respostas
-[verificáveis vs não verificáveis — SER EXPLÍCITO sobre o que não foi verificável e porquê,
-em 2-3 linhas sintéticas. Flags detectados.]
-
-### Reconciliação de notas
-[match/mismatch/unavailable por aluno]
+[2-3 linhas sintéticas:
+- Verificáveis: N (= perguntas com gabarito LW × alunos); confirmar que correspondem aos
+  tipos com gabarito (TMC, TTF, etc.).
+- Não verificáveis: N (= perguntas sem gabarito no export × alunos) — indicar porquê.
+- Flags detectados: listar tipo e contagem.]
 
 ### Coerência entre alunos
-[inconsistências de pontuação — se 0, dizer explicitamente "Nenhuma inconsistência detectada."]
+[1 linha apenas: se 0 inconsistências, "Nenhuma inconsistência de pontuação detectada entre
+alunos para a mesma resposta." Se houver, listar brevemente.]
 
 ---
 
 ## ⚠️ Problemas a corrigir
 
-[Para cada problema real: H3 com título, descrição, alunos afectados com nome e resposta
-exacta, acção necessária. Se não houver problemas, escrever "Nenhum problema identificado."]
+[Para cada problema real: H3 com título claro.
+- Flags `answer_accepted_but_zero`: usar título "Resposta certa mas pontuação zero".
+  Listar alunos com nome, resposta exacta e pontos atribuídos.
+- `answer_key_real_discrepancies`: listar pergunta (número + enunciado), resposta LW, resposta
+  docente.
+Se não houver problemas: "Nenhum problema identificado."]
 
 ---
 
 ## ℹ️ Limitações de auditabilidade
 
-[Lista sintética das perguntas não auditáveis e porquê — mencionar tipos e enunciados concretos]
+[Listar cada pergunta não auditável com:
+- Número da pergunta (se disponível) e primeiros 80 chars do enunciado
+- Tipo (blockType)
+- Motivo (limitação de export LW / não encontrada no Word)
+Agrupar por documento Word de origem quando aplicável.]
 
 ---
 
@@ -118,7 +136,7 @@ exacta, acção necessária. Se não houver problemas, escrever "Nenhum problema
 
 | Prioridade | Acção | Responsável | Prazo sugerido |
 |------------|-------|-------------|---------------|
-[mínimo uma linha por problema ⚠️; uma linha por limitação relevante]
+[mínimo uma linha por problema ⚠️; uma linha por limitação accionável]
 
 ---
 
@@ -230,12 +248,13 @@ def _build_context(run_dir: Path) -> dict:
     queue_rows = _read_csv(run_dir / "reconcile" / "manual_review_queue" / "manual_review_queue.csv")
     grade_rows = _read_csv(run_dir / "reconcile" / "grade_reconciliation" / "grade_reconciliation.csv")
 
-    # Active questions from submissions (canonical list — what students actually answered)
+    # Active questions: named (from reconciliation_report) + unnamed (no_config_match from queue)
     active_qns = sorted(
         {r.get("question_number", "").strip() for r in report_rows if r.get("question_number", "").strip()},
         key=lambda x: int(x) if x.isdigit() else 999,
     )
-    active_count = len(active_qns)
+    unnamed_count = len(queue_rows)  # fillInTheBlankBlock/match — no question_number in export
+    active_count = len(active_qns) + unnamed_count
 
     # Build cross-referenced question index
     questions_index = _build_question_index(config_rows, ak_rows, report_rows)
@@ -271,17 +290,40 @@ def _build_context(run_dir: Path) -> dict:
         for r in queue_rows
     ]
 
-    # Unverifiable explanation (explicit counts)
+    # Verifiability counts
     no_config = summary.get("verifiable_breakdown", {}).get("no_config_match", 0)
     verifiable = summary.get("verifiable_breakdown", {}).get("yes", 0)
     total_rows = summary.get("submission_rows", 0)
     n_students = len({r.get("user_id", r.get("email", "")) for r in report_rows})
     unverifiable_types = sorted({r.get("blockType", "") for r in queue_rows if r.get("blockType")})
     unverifiable_explanation = (
-        f"{no_config} linhas não verificáveis ({len(review_queue)} pergunta(s) × {n_students} alunos). "
+        f"{no_config} linhas não verificáveis = {len(review_queue)} pergunta(s) × {n_students} alunos. "
         f"Tipos: {', '.join(unverifiable_types)}. "
-        f"O LearnWorlds não exporta o gabarito destes tipos — limitação da plataforma."
+        f"O LearnWorlds não exporta o gabarito destes tipos — limitação da plataforma, não erro de configuração."
     )
+    # Verifiable by blockType (to confirm compatible typology)
+    from collections import Counter
+    verif_bt = Counter(
+        r.get("blockType", "") for r in report_rows if r.get("verifiable", "") == "yes"
+    )
+    verifiable_by_type = dict(verif_bt)
+
+    # Answer key coverage stats
+    expected_answer_key_count = len(config_rows)  # exam_config questions the Word extraction covers
+    ak_conf = Counter(r.get("confidence", "") for r in ak_rows)
+    ak_matched_count = ak_conf.get("high", 0) + ak_conf.get("medium", 0) + ak_conf.get("low", 0)
+
+    def _norm(s: str) -> str:
+        import re, unicodedata
+        s = unicodedata.normalize("NFKD", s.lower())
+        return re.sub(r"[^a-z0-9]", "", s)
+
+    def _doc_in_lw_variants(lw: str, doc: str) -> bool:
+        """True if doc answer is one of the semicolon-separated LW accepted variants."""
+        if ";" not in lw:
+            return False
+        doc_norm = _norm(doc)
+        return any(_norm(v.strip()) == doc_norm for v in lw.split(";"))
 
     # Answer key: split real discrepancies from doc-not-found
     ak_real_discrepancies = []
@@ -292,17 +334,22 @@ def _build_context(run_dir: Path) -> dict:
         if r.get("confidence", "") == "unmatched":
             ak_doc_not_found.append({
                 "question_number": r.get("question_number", ""),
-                "question_text": r.get("question_text", "")[:150],
+                "question_text": r.get("question_text", "")[:120],
                 "lw_correct_answer": r.get("lw_correct_answer", ""),
-                "note": "Não encontrada no documento Word — gabarito LW está correcto.",
+                "note": "Pergunta não encontrada no documento Word pelo LLM — gabarito LW correcto.",
                 "source_doc": r.get("source_doc", ""),
             })
         else:
+            lw_ans = r.get("lw_correct_answer", "")
+            doc_ans = r.get("doc_correct_answer", "")
+            # Skip false positive: doc answer is one of the LW accepted variants
+            if _doc_in_lw_variants(lw_ans, doc_ans):
+                continue
             ak_real_discrepancies.append({
                 "question_number": r.get("question_number", ""),
-                "question_text": r.get("question_text", "")[:150],
-                "lw_correct_answer": r.get("lw_correct_answer", ""),
-                "doc_correct_answer": r.get("doc_correct_answer", ""),
+                "question_text": r.get("question_text", "")[:120],
+                "lw_correct_answer": lw_ans,
+                "doc_correct_answer": doc_ans,
                 "answers_match": r.get("answers_match", ""),
                 "confidence": r.get("confidence", ""),
                 "notes": r.get("notes", ""),
@@ -341,33 +388,33 @@ def _build_context(run_dir: Path) -> dict:
         # Counts
         "submission_rows": total_rows,
         "n_students": n_students,
-        "exam_config_count": len(config_rows),
         "active_questions_count": active_count,
-        "active_questions": active_qns,
+        "active_questions_named": active_qns,        # with question_number (from exam_config)
+        "active_questions_unnamed_count": unnamed_count,  # fillInTheBlankBlock/match (no number)
+        "exam_config_exportable_count": len(config_rows),  # questions LW exported with answer key
         "numbering_note": (
-            "A numeração em 'active_questions' vem das submissões (o que os alunos responderam). "
-            "O export XLSX pode conter linhas extra não apresentadas aos alunos. "
-            "Referenciar sempre perguntas pelo enunciado além do número."
+            "Os números de pergunta vêm das submissões dos alunos. "
+            "O export XLSX pode diferir da numeração visual no LW — identificar sempre pelo enunciado."
         ),
         # Verifiability
         "verifiable_count": verifiable,
+        "verifiable_by_type": verifiable_by_type,
         "unverifiable_count": no_config,
         "unverifiable_explanation": unverifiable_explanation,
         "unverifiable_questions": review_queue,
         # Flags
         "flagged_rows": flagged,
         "flag_counts": summary.get("flag_counts", {}),
-        # Grade reconciliation
-        "grade_status_counts": summary.get("grade_status_counts", {}),
-        "grade_mismatches": grade_mismatches,
-        # Consistency
+        # Consistency (same answer, different points across students)
         "inconsistent_scoring_questions": summary.get("inconsistent_scoring_questions", 0),
-        # Answer key (docente)
+        # Answer key (docente Word → LLM)
         "answer_key_ran": bool(ak_rows),
-        "answer_key_summary": ak_summary,
+        "expected_answer_key_count": expected_answer_key_count,
+        "answer_key_confidence_breakdown": dict(ak_conf),
+        "answer_key_matched_count": ak_matched_count,
         "answer_key_real_discrepancies": ak_real_discrepancies,
         "answer_key_doc_not_found": ak_doc_not_found,
-        # Full question index (for LLM to use consistent numbering)
+        # Full question index (consistent numbering for LLM)
         "questions_index": {
             qn: {k: v for k, v in q.items() if k != "question_number"}
             for qn, q in questions_index.items()
