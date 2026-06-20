@@ -8,7 +8,9 @@ output/*
 !output/.gitkeep
 
 # Inputs (UI exports contain the answer key) — kept locally, never committed
-input/*
+input/**
+!input/**/
+!input/.gitkeep
 !input/sample_response.json
 
 # macOS
