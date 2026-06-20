@@ -56,6 +56,7 @@ os valores do `assessment.cfg` — basta confirmar com OK se estiverem corretos.
 | **[4/6]** | Gabarito LW | Selecionar o XLSX exportado da UI → copia+renomeia para `input/` → corre submissões (API) + importação do gabarito |
 | **[5/6]** | Guião Word | Sim/Não → se Sim: selecionar 1 ou mais .docx (Cmd+clique para múltiplos) → copia+renomeia para `input/` → extrai respostas via OpenAI |
 | **[6/6]** | Reconciliação | Sim/Não → se Sim: reconcilia submissões com gabarito e gera relatórios |
+| **[6b/6]** | Interpretação IA | Automático após Passo 6 → chama OpenAI e escreve `audit_interpretation.md` na raiz da run |
 
 ---
 
@@ -90,6 +91,7 @@ os valores do `assessment.cfg` — basta confirmar com OK se estiverem corretos.
 | `reconcile/run_reconcile.py` | Junta submissões + gabarito, aplica regras de auditoria, gera relatórios. |
 | `reconcile/core.py` | Lógica de negócio: `check_answer()`, `reconcile_grade()`, `join_key()`, `norm()`. |
 | `tools/extract_answer_key.py` | Extrai respostas corretas de ficheiros Word via OpenAI e cruza com o gabarito LW. |
+| `tools/interpret_run.py` | Gera `audit_interpretation.md` — interpretação IA da auditoria em Português. Corre automaticamente após o Passo 6. |
 
 ### Pastas de dados (não estão no git)
 
@@ -137,6 +139,7 @@ output/
             manual_review_queue.xlsx
           reconciliation_summary.json
           reconciliation_summary.md       sumário legível com contagens e flags
+        audit_interpretation.md           interpretação IA — só se Passo 6b correu
 ```
 
 ---

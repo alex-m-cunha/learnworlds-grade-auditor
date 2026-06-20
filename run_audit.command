@@ -248,6 +248,12 @@ if [ "$RECONCILE_REPLY" = "Sim" ]; then
     python -m reconcile.run_reconcile \
         --run-dir "$RUN_DIR" \
         || { echo "ERRO na reconciliação."; read -rn 1 -s -p "Prima uma tecla para fechar..."; exit 1; }
+
+    echo
+    echo ">> [6b/6] A gerar interpretação automática (IA)..."
+    python tools/interpret_run.py \
+        --run-dir "$RUN_DIR" \
+        || echo "  AVISO: interpretação não gerada (OPENAI_API_KEY ausente ou erro de rede)."
 else
     echo "  Passo 6 ignorado."
 fi

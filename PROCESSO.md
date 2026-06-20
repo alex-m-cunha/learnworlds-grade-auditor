@@ -174,6 +174,27 @@ em `Decimal` (sem erros de vírgula flutuante).
 
 ---
 
+### [6b/6] INTERPRETAÇÃO AUTOMÁTICA *(automático após reconciliação)*
+
+Após o Passo [6/6] completar com sucesso, o lançador corre automaticamente
+`tools/interpret_run.py`, que chama a OpenAI para produzir uma interpretação sintética
+da auditoria em Português.
+
+O que produz — `audit_interpretation.md` (na raiz da pasta de run):
+- **Resumo executivo** — visão geral em 2-3 parágrafos
+- **✅ O que correu bem** — pontos positivos
+- **⚠️ Problemas a corrigir** — flags com nomes de alunos, respostas concretas, acção sugerida
+- **ℹ️ Informação relevante** — limitações de auditabilidade, contexto metodológico
+- **Tabela de acções** — prioridade (🔴🟡🔵), acção, responsável, prazo sugerido
+
+> Se `OPENAI_API_KEY` não estiver configurada em `.env`, este passo é ignorado sem erro.
+> Pode também correr manualmente:
+> ```bash
+> python tools/interpret_run.py --run-dir "output/pggf2/uc5-fintech/2026-06-20_120000"
+> ```
+
+---
+
 ## Estrutura de output
 
 Cada corrida cria uma pasta com timestamp — **nunca sobrescreve** corridas anteriores:
@@ -212,6 +233,7 @@ output/
             manual_review_queue.xlsx
           reconciliation_summary.json
           reconciliation_summary.md       sumário legível com contagens e flags
+        audit_interpretation.md           só se o Passo 6b foi corrido — interpretação IA
 ```
 
 ---
@@ -275,6 +297,10 @@ python tools/extract_answer_key.py \
 
 # Reconciliar manualmente apontando para uma pasta de run
 python -m reconcile.run_reconcile \
+    --run-dir "output/pggf2/uc5-fintech/2026-06-20_120000"
+
+# Gerar interpretação IA manualmente (depois de reconciliar)
+python tools/interpret_run.py \
     --run-dir "output/pggf2/uc5-fintech/2026-06-20_120000"
 
 # Notas do curso (passo opcional, não incluído no launcher)

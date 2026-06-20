@@ -180,6 +180,11 @@ if "!RECONCILE_REPLY!"=="Sim" (
     echo ^>^> [6/6] A reconciliar...
     python -m reconcile.run_reconcile --run-dir "!RUN_DIR!"
     if errorlevel 1 ( echo ERRO na reconciliacao. & pause & exit /b 1 )
+
+    echo.
+    echo ^>^> [6b/6] A gerar interpretacao automatica (IA)...
+    python tools\interpret_run.py --run-dir "!RUN_DIR!"
+    if errorlevel 1 echo   AVISO: interpretacao nao gerada (OPENAI_API_KEY ausente ou erro de rede).
 ) else (
     echo   Passo 6 ignorado.
 )
