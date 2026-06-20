@@ -9,6 +9,7 @@ Aba 2 — Re-correr: reconciliar / interpretar sobre run existente
 
 from __future__ import annotations
 
+import csv as _csv
 import re
 import shutil
 import subprocess
@@ -155,7 +156,7 @@ class NovaRunTab(ttk.Frame):
             ("Assessment ID:", "aid", cfg.get("ASSESSMENT_ID", "")),
         ]
         hints = [
-            "ex: PGGF2",
+            "ex: PGDBO4",
             "ex: UC1 Gestão de Projetos e Estratégia de Dados",
             "Últimos 24 caracteres da URL da atividade no LearnWorlds",
         ]
@@ -166,6 +167,9 @@ class NovaRunTab(ttk.Frame):
             self._vars[key] = var
             entry = ttk.Entry(form, textvariable=var, width=55)
             entry.grid(row=row_idx, column=1, sticky="ew", pady=3)
+            if key == "aid":
+                entry.bind("<FocusOut>", lambda e: self._clean_aid())
+                entry.bind("<<Paste>>", lambda e: self.after(10, self._clean_aid))
             ttk.Label(
                 form,
                 text=hints[row_idx],
@@ -173,11 +177,20 @@ class NovaRunTab(ttk.Frame):
                 font=("TkDefaultFont", 9),
             ).grid(row=row_idx, column=2, sticky="w", padx=(6, 0))
 
+        # Assessment ID warning row
+        self._aid_warning_var = tk.StringVar(value="")
+        ttk.Label(
+            form,
+            textvariable=self._aid_warning_var,
+            foreground="#cc4400",
+            font=("TkDefaultFont", 9),
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=(0, 0), pady=(0, 2))
+
         # Época dropdown
-        ttk.Label(form, text="Época:").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=3)
+        ttk.Label(form, text="Época:").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=3)
         self._vars["epoca"] = tk.StringVar(value=cfg.get("EPOCA", "Normal"))
         epoca_menu = ttk.OptionMenu(form, self._vars["epoca"], self._vars["epoca"].get(), "Normal", "Extraordinária")
-        epoca_menu.grid(row=3, column=1, sticky="w", pady=3)
+        epoca_menu.grid(row=4, column=1, sticky="w", pady=3)
 
         # ── Steps ─────────────────────────────────────────────────────────────
         steps = ttk.LabelFrame(self, text="Passos do pipeline", padding=10)
@@ -224,10 +237,32 @@ class NovaRunTab(ttk.Frame):
         )
         self._btn_interpret.pack(fill="x", pady=3)
 
+        self._btn_reset = ttk.Button(
+            self,
+            text="Iniciar Nova Run",
+            command=self._reset,
+            state="disabled",
+        )
+        self._btn_reset.pack(fill="x", pady=(8, 2))
+
         self._status_var = tk.StringVar(value="Pronto.")
         ttk.Label(self, textvariable=self._status_var, foreground="grey").pack(anchor="w")
 
     # ── Step helpers ──────────────────────────────────────────────────────────
+
+    def _clean_aid(self) -> None:
+        raw = self._vars["aid"].get()
+        if not raw:
+            self._aid_warning_var.set("")
+            return
+        m = re.search(r"(?<![0-9a-fA-F])([0-9a-fA-F]{24})(?![0-9a-fA-F])", raw)
+        if m:
+            cleaned = m.group(1).lower()
+            if cleaned != raw:
+                self._vars["aid"].set(cleaned)
+            self._aid_warning_var.set("")
+        else:
+            self._aid_warning_var.set("⚠ ID não reconhecido — cola o URL completo ou os 24 caracteres finais")
 
     def _fields(self) -> tuple[str, str, str, str, str]:
         programa = _slugify(self._vars["programa"].get().strip())
@@ -245,6 +280,17 @@ class NovaRunTab(ttk.Frame):
                     self._btn_reconcile, self._btn_interpret):
             btn.configure(state="disabled")
 
+    def _reset(self) -> None:
+        self._run_dir = None
+        self._btn_xlsx.configure(state="normal")
+        self._btn_word.configure(state="disabled")
+        self._btn_skip_word.configure(state="disabled")
+        self._btn_reconcile.configure(state="disabled")
+        self._btn_interpret.configure(state="disabled")
+        self._btn_reset.configure(state="disabled")
+        self._set_status("Pronto para nova run.")
+        _log_clear(self._log)
+
     # ── Step 1 ────────────────────────────────────────────────────────────────
 
     def _step1_xlsx(self) -> None:
@@ -261,12 +307,16 @@ class NovaRunTab(ttk.Frame):
         if not xlsx:
             return
 
+        # Derive época slug and full label before using either
+        epoca_slug = "extra" if epoca.lower().startswith("extra") else "normal"
+        label_with_epoca = f"{label}-{epoca_slug}"
+
         # Save config
-        _save_cfg(programa, label, label_display, aid, epoca)
+        _save_cfg(programa, label_with_epoca, label_display, aid, epoca)
 
         # Create run dir
         run_ts = _timestamp()
-        run_dir = PROJECT_ROOT / "output" / programa / label / run_ts
+        run_dir = PROJECT_ROOT / "output" / programa / label_with_epoca / run_ts
         run_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir = run_dir
 
@@ -284,7 +334,7 @@ class NovaRunTab(ttk.Frame):
         cmd_extract = [
             sys.executable, "-m", "extractor.run_extract",
             "--assessment-id", aid,
-            "--label", label,
+            "--label", label_with_epoca,
             "--run-dir", str(run_dir),
         ]
 
@@ -299,7 +349,7 @@ class NovaRunTab(ttk.Frame):
                 sys.executable, "-m", "extractor.run_exam_config",
                 "--xlsx", str(dest_xlsx),
                 "--assessment-id", aid,
-                "--label", label,
+                "--label", label_with_epoca,
                 "--run-dir", str(run_dir),
             ]
             _run_step(cmd_exam, self._log, _after_exam_config)
@@ -381,6 +431,12 @@ class NovaRunTab(ttk.Frame):
             "--run-dir", str(self._run_dir),
         ]
 
+        def _after_review(rc: int) -> None:
+            self._btn_interpret.configure(state="normal")
+            self._set_status("Passo 3 OK — pronto para interpretar.")
+            if callable(getattr(self, "_on_revision_ready", None)):
+                self._on_revision_ready(self._run_dir)
+
         def _after(rc: int) -> None:
             if rc != 0:
                 _log_write(self._log, "\nERRO na reconciliação.\n")
@@ -388,8 +444,11 @@ class NovaRunTab(ttk.Frame):
                 self._set_status("Erro na reconciliação.")
                 return
             _log_write(self._log, "\nPasso 3 concluído.\n")
-            self._btn_interpret.configure(state="normal")
-            self._set_status("Passo 3 OK — pronto para interpretar.")
+            cmd_review = [
+                sys.executable, "tools/generate_review_sheet.py",
+                "--run-dir", str(self._run_dir),
+            ]
+            _run_step(cmd_review, self._log, _after_review)
 
         _run_step(cmd, self._log, _after)
 
@@ -406,6 +465,7 @@ class NovaRunTab(ttk.Frame):
         ]
 
         def _after(rc: int) -> None:
+            self._btn_reset.configure(state="normal")
             if rc != 0:
                 _log_write(self._log, "\nERRO na interpretação (OPENAI_API_KEY ausente?).\n")
                 self._btn_interpret.configure(state="normal")
@@ -418,9 +478,9 @@ class NovaRunTab(ttk.Frame):
         _run_step(cmd, self._log, _after)
 
 
-# ── Re-correr tab ─────────────────────────────────────────────────────────────
+# ── Atualizar Run tab ─────────────────────────────────────────────────────────
 
-class RecorrerTab(ttk.Frame):
+class AtualizarRunTab(ttk.Frame):
     def __init__(self, parent: ttk.Notebook, log: "tk.Text") -> None:
         super().__init__(parent, padding=12)
         self._log = log
@@ -442,11 +502,12 @@ class RecorrerTab(ttk.Frame):
 
         # ── Checkbox inferências ──────────────────────────────────────────────
         self._inferred_reviewed = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self._chk_reviewed = ttk.Checkbutton(
             self,
             text="Respostas inferidas já revistas manualmente",
             variable=self._inferred_reviewed,
-        ).pack(anchor="w", pady=(0, 8))
+        )
+        self._chk_reviewed.pack(anchor="w", pady=(0, 8))
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_frame = ttk.Frame(self)
@@ -471,6 +532,8 @@ class RecorrerTab(ttk.Frame):
         self._status_var = tk.StringVar(value="Seleciona uma pasta de run.")
         ttk.Label(self, textvariable=self._status_var, foreground="grey").pack(anchor="w")
 
+    _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{6}$")
+
     def _pick_dir(self) -> None:
         d = filedialog.askdirectory(
             title="Selecionar pasta de run existente",
@@ -478,10 +541,21 @@ class RecorrerTab(ttk.Frame):
         )
         if not d:
             return
-        self._run_dir = Path(d)
+        path = Path(d)
+        if not self._TS_RE.match(path.name):
+            messagebox.showerror(
+                "Pasta inválida",
+                "Seleciona uma pasta de run com timestamp.\n\n"
+                "Esperado: 2026-06-20_142557\n"
+                f"Selecionado: '{path.name}'",
+            )
+            return
+        self._run_dir = path
         self._dir_var.set(d)
 
-        # Pre-fill checkbox from run_meta.cfg
+        # Pre-fill checkbox from run_meta.cfg; re-enable in case previous run had locked it
+        self._chk_reviewed.configure(state="normal")
+        self._inferred_reviewed.set(False)
         meta = self._run_dir / "run_meta.cfg"
         if meta.exists():
             for line in meta.read_text(encoding="utf-8").splitlines():
@@ -492,6 +566,8 @@ class RecorrerTab(ttk.Frame):
         self._btn_interpret.configure(state="normal")
         self._btn_finder.configure(state="normal")
         self._status_var.set(f"Run seleccionada: {self._run_dir.name}")
+        if callable(getattr(self, "_on_revision_ready", None)):
+            self._on_revision_ready(self._run_dir)
 
     def _set_status(self, msg: str) -> None:
         self._status_var.set(msg)
@@ -509,14 +585,22 @@ class RecorrerTab(ttk.Frame):
             "--run-dir", str(self._run_dir),
         ]
 
-        def _after(rc: int) -> None:
+        def _after_review(rc: int) -> None:
             self._btn_reconcile.configure(state="normal")
+            self._set_status("Reconciliação concluída.")
+
+        def _after(rc: int) -> None:
             if rc != 0:
                 _log_write(self._log, "\nERRO na reconciliação.\n")
+                self._btn_reconcile.configure(state="normal")
                 self._set_status("Erro na reconciliação.")
-            else:
-                _log_write(self._log, "\nReconciliação concluída.\n")
-                self._set_status("Reconciliação concluída.")
+                return
+            _log_write(self._log, "\nReconciliação concluída.\n")
+            cmd_review = [
+                sys.executable, "tools/generate_review_sheet.py",
+                "--run-dir", str(self._run_dir),
+            ]
+            _run_step(cmd_review, self._log, _after_review)
 
         _run_step(cmd, self._log, _after)
 
@@ -564,6 +648,239 @@ class RecorrerTab(ttk.Frame):
             subprocess.Popen(["xdg-open", str(self._run_dir)])
 
 
+# ── Revisão Manual tab ────────────────────────────────────────────────────────
+
+_BLOCK_LABELS = {
+    "match": "Correspondência",
+    "fillInTheBlankBlock": "Preencher espaços",
+}
+_BLOCK_HINTS = {
+    "match": "Formato: Termo A → Descrição A; Termo B → Descrição B",
+    "fillInTheBlankBlock": "Formato: resposta1 | resposta2 | ...",
+}
+_CONF_COLORS = {"high": "#2d7a2d", "medium": "#b86000", "low": "#cc2222", "unmatched": "#cc2222"}
+
+
+class RevisaoManualTab(ttk.Frame):
+    def __init__(self, parent: ttk.Notebook, on_save_fn=None) -> None:
+        super().__init__(parent, padding=0)
+        self._run_dir: Path | None = None
+        self._original_answers: list[str] = []
+        self._text_widgets: list[tk.Text] = []
+        self._rows: list[dict] = []
+        self._on_save_fn = on_save_fn
+
+        # ── Header note ───────────────────────────────────────────────────────
+        ttk.Label(
+            self,
+            text=(
+                "Objetivo: confirmar as respostas inferidas pelo LLM a partir do gabarito ID/docente,\n"
+                "verificando se correspondem ao configurado no LearnWorlds. Corrige o campo se necessário."
+            ),
+            foreground="grey",
+            font=("TkDefaultFont", 9),
+            justify="left",
+        ).pack(anchor="w", padx=12, pady=(8, 4))
+
+        # ── Scrollable canvas ─────────────────────────────────────────────────
+        canvas_frame = ttk.Frame(self)
+        canvas_frame.pack(fill="both", expand=True, padx=8)
+
+        self._canvas = tk.Canvas(canvas_frame, highlightthickness=0, yscrollincrement=20)
+        _sb = ttk.Scrollbar(canvas_frame, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+
+        self._inner = ttk.Frame(self._canvas)
+        self._cw = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._inner.bind("<Configure>", self._on_inner_configure)
+        self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfigure(
+            self._cw, width=e.width))
+
+        # Bind to canvas + inner frame; _build_cards re-binds all card widgets.
+        for _w in (self._canvas, self._inner):
+            _w.bind("<MouseWheel>", self._scroll)
+            _w.bind("<Button-4>", self._scroll)
+            _w.bind("<Button-5>", self._scroll)
+
+        self._placeholder = ttk.Label(
+            self._inner,
+            text="Sem run carregada. Corre o passo 3 na aba Nova Run\nou seleciona uma pasta na aba Atualizar Run.",
+            foreground="grey",
+        )
+        self._placeholder.pack(padx=20, pady=40)
+
+        # ── Bottom buttons ────────────────────────────────────────────────────
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill="x", padx=12, pady=8)
+
+        self._btn_save = ttk.Button(
+            btn_frame, text="Guardar revisão", command=self._save, state="disabled"
+        )
+        self._btn_save.pack(side="left", padx=(0, 6))
+
+        self._btn_repor = ttk.Button(
+            btn_frame, text="Repor original", command=self._repor_original, state="disabled"
+        )
+        self._btn_repor.pack(side="left")
+
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self._status_var, foreground="grey").pack(
+            side="left", padx=(12, 0)
+        )
+
+    def _on_inner_configure(self, e=None) -> None:
+        bbox = self._canvas.bbox("all")
+        if bbox:
+            self._canvas.configure(scrollregion=bbox)
+
+    def _scroll(self, e) -> None:
+        # Widget-level bindings fire before Text class binding — no "break" needed.
+        # yscrollincrement=20 → 1 unit = 20px, so even n=1 is visible.
+        if e.num == 4:
+            self._canvas.yview_scroll(-3, "units")
+        elif e.num == 5:
+            self._canvas.yview_scroll(3, "units")
+        elif e.delta:
+            # clamp to 1–6 units; handles both fractional trackpad (delta≈3) and wheel (delta≈120)
+            n = max(1, min(6, abs(round(e.delta / 20)))) * (-1 if e.delta > 0 else 1)
+            self._canvas.yview_scroll(n, "units")
+
+    def _bind_scroll_recursive(self, widget) -> None:
+        widget.bind("<MouseWheel>", self._scroll)
+        widget.bind("<Button-4>", self._scroll)
+        widget.bind("<Button-5>", self._scroll)
+        for child in widget.winfo_children():
+            self._bind_scroll_recursive(child)
+
+    # ── Load ──────────────────────────────────────────────────────────────────
+
+    def load(self, run_dir: Path) -> None:
+        csv_path = run_dir / "answer_key" / "inferred_answer_key.csv"
+        self._run_dir = run_dir
+        self._rows = []
+
+        if csv_path.exists():
+            with open(csv_path, newline="", encoding="utf-8-sig") as f:
+                self._rows = list(_csv.DictReader(f))
+
+        # doc_question_number is now a direct column in inferred_answer_key.csv
+
+        self._original_answers = [r.get("doc_correct_answer", "") for r in self._rows]
+        self._build_cards()
+        has_rows = bool(self._rows)
+        self._btn_save.configure(state="normal" if has_rows else "disabled")
+        self._btn_repor.configure(state="normal" if has_rows else "disabled")
+        self._btn_save.configure(text="Guardar revisão")
+        self._status_var.set(
+            f"{len(self._rows)} pergunta(s) inferida(s) para revisão."
+            if has_rows else "Nenhuma pergunta inferida nesta run."
+        )
+
+    def _build_cards(self) -> None:
+        for w in self._inner.winfo_children():
+            w.destroy()
+        self._text_widgets = []
+
+        if not self._rows:
+            ttk.Label(
+                self._inner, text="Nenhuma pergunta inferida nesta run.", foreground="grey"
+            ).pack(padx=20, pady=40)
+            return
+
+        bg = ttk.Style().lookup("TFrame", "background") or "#f0f0f0"
+
+        for i, row in enumerate(self._rows):
+            block_type = row.get("blockType", "")
+            confidence = row.get("confidence", "")
+            question_text = row.get("question_text", "")
+            answer = row.get("doc_correct_answer", "")
+            notes = row.get("notes", "")
+            doc_q_num = row.get("doc_question_number", "").strip()
+
+            block_label = _BLOCK_LABELS.get(block_type, block_type or "Outro")
+            conf_color = _CONF_COLORS.get(confidence, "#888888")
+
+            q_label = f"Q{doc_q_num}" if doc_q_num else f"#{i + 1}"
+
+            card = ttk.LabelFrame(self._inner, text=f"  {q_label}  {block_label}", padding=8)
+            card.pack(fill="x", padx=8, pady=(6, 2))
+            card.columnconfigure(0, weight=1)
+
+            ttk.Label(
+                card, text=f"Confiança: {confidence}",
+                foreground=conf_color, font=("TkDefaultFont", 9)
+            ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+            # Question (read-only)
+            q_txt = tk.Text(
+                card, height=3, wrap="word", state="normal",
+                font=("TkDefaultFont", 10), relief="flat", borderwidth=0, background=bg,
+            )
+            q_txt.insert("1.0", question_text)
+            q_txt.configure(state="disabled")
+            q_txt.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+
+            # Format hint
+            hint = _BLOCK_HINTS.get(block_type, "Texto livre")
+            ttk.Label(
+                card, text=hint, foreground="grey", font=("TkDefaultFont", 9)
+            ).grid(row=2, column=0, sticky="w", pady=(0, 2))
+
+            # Editable answer
+            ans_txt = tk.Text(card, height=3, wrap="word", font=("TkDefaultFont", 10),
+                              undo=True, maxundo=-1)
+            ans_txt.insert("1.0", answer)
+            ans_txt.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+            self._text_widgets.append(ans_txt)
+
+            # LLM notes
+            if notes:
+                ttk.Label(
+                    card, text=f"Nota LLM: {notes}", foreground="grey",
+                    font=("TkDefaultFont", 9), wraplength=580, justify="left",
+                ).grid(row=4, column=0, sticky="w")
+
+            ttk.Separator(self._inner).pack(fill="x", padx=8, pady=2)
+
+        # Re-bind scroll to every card widget (widget-level fires before Text class binding)
+        self._bind_scroll_recursive(self._inner)
+        # Force scrollregion update after layout settles
+        self._inner.after(50, self._on_inner_configure)
+
+    # ── Save / Repor ──────────────────────────────────────────────────────────
+
+    def _save(self) -> None:
+        if not self._run_dir or not self._rows:
+            return
+
+        for row, widget in zip(self._rows, self._text_widgets):
+            row["doc_correct_answer"] = widget.get("1.0", "end-1c").strip()
+
+        csv_path = self._run_dir / "answer_key" / "inferred_answer_key.csv"
+        fieldnames = list(self._rows[0].keys())
+        with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = _csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self._rows)
+
+        _set_run_meta_key(self._run_dir, "INFERRED_REVIEWED", "true")
+
+        if callable(self._on_save_fn):
+            self._on_save_fn(self._run_dir)
+
+        self._btn_save.configure(text="✓ Revisão guardada")
+        self._status_var.set("Guardado. Volta à aba Atualizar Run para re-interpretar.")
+
+    def _repor_original(self) -> None:
+        for widget, original in zip(self._text_widgets, self._original_answers):
+            widget.delete("1.0", "end")
+            widget.insert("1.0", original)
+        self._btn_save.configure(text="Guardar revisão")
+        self._status_var.set("Valores repostos.")
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class App(tk.Tk):
@@ -595,17 +912,100 @@ class App(tk.Tk):
         scroll.configure(command=self._log.yview)
 
         # ── Notebook tabs ─────────────────────────────────────────────────────
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=False, padx=10, pady=(10, 0))
+        self._nb = ttk.Notebook(self)
+        self._nb.pack(fill="both", expand=False, padx=10, pady=(10, 0))
+        nb = self._nb
 
         self._nova_run = NovaRunTab(nb, self._log)
         nb.add(self._nova_run, text="  Nova Run  ")
 
-        self._recorrer = RecorrerTab(nb, self._log)
-        nb.add(self._recorrer, text="  Re-correr  ")
+        self._revisao = RevisaoManualTab(nb, on_save_fn=self._lock_revision_checkbox)
+        nb.add(self._revisao, text="  Revisão Manual  ")
+        nb.tab(self._revisao, state="disabled")
+
+        self._recorrer = AtualizarRunTab(nb, self._log)
+        nb.add(self._recorrer, text="  Atualizar Run  ")
+
+        # Wire revision callbacks
+        self._nova_run._on_revision_ready = self.load_revision
+        self._recorrer._on_revision_ready = self.load_revision
+
+        # ── macOS Entry: Shift+Up/Down selects to start/end of field ─────────────
+        if sys.platform == "darwin":
+            def _shift_up(e):
+                try:
+                    cur = e.widget.index("insert")
+                    e.widget.selection_range(0, cur)
+                    e.widget.icursor(0)
+                except Exception:
+                    pass
+                return "break"
+
+            def _shift_down(e):
+                try:
+                    cur = e.widget.index("insert")
+                    e.widget.selection_range(cur, "end")
+                    e.widget.icursor("end")
+                except Exception:
+                    pass
+                return "break"
+
+            def _arrow_up(e):
+                try:
+                    e.widget.selection_clear()
+                    e.widget.icursor(0)
+                except Exception:
+                    pass
+                return "break"
+
+            def _arrow_down(e):
+                try:
+                    e.widget.selection_clear()
+                    e.widget.icursor("end")
+                except Exception:
+                    pass
+                return "break"
+
+            for _cls in ("TEntry", "Entry"):
+                self.bind_class(_cls, "<Shift-Up>", _shift_up)
+                self.bind_class(_cls, "<Shift-Down>", _shift_down)
+                self.bind_class(_cls, "<Up>", _arrow_up)
+                self.bind_class(_cls, "<Down>", _arrow_down)
+
+        # ── tk.Text undo/redo (cross-platform) ────────────────────────────────
+        def _text_undo(e):
+            try:
+                e.widget.edit_undo()
+            except Exception:
+                pass
+            return "break"
+
+        def _text_redo(e):
+            try:
+                e.widget.edit_redo()
+            except Exception:
+                pass
+            return "break"
+
+        if sys.platform == "darwin":
+            self.bind_class("Text", "<Command-z>", _text_undo)
+            self.bind_class("Text", "<Command-Shift-z>", _text_redo)
+        else:
+            self.bind_class("Text", "<Control-z>", _text_undo)
+            self.bind_class("Text", "<Control-y>", _text_redo)
+            self.bind_class("Text", "<Control-Shift-z>", _text_redo)
 
         # ── Startup: install deps if needed ───────────────────────────────────
         self.after(200, self._check_deps)
+
+    def load_revision(self, run_dir: Path) -> None:
+        self._revisao.load(run_dir)
+        self._nb.tab(self._revisao, state="normal")
+
+    def _lock_revision_checkbox(self, run_dir: Path) -> None:
+        if self._recorrer._run_dir == run_dir:
+            self._recorrer._inferred_reviewed.set(True)
+            self._recorrer._chk_reviewed.configure(state="disabled")
 
     def _check_deps(self) -> None:
         try:
