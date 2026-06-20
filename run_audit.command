@@ -42,13 +42,15 @@ CFG_PROGRAM="$(python -c "
 from extractor.config import _load_cfg_file
 from pathlib import Path
 c = _load_cfg_file(Path('assessment.cfg'))
-print(c.get('PROGRAM', ''))
+print(c.get('PROGRAM', '').upper())
 " 2>/dev/null)"
 CFG_LABEL="$(python -c "
 from extractor.config import _load_cfg_file
 from pathlib import Path
 c = _load_cfg_file(Path('assessment.cfg'))
-print(c.get('LABEL', ''))
+# Prefer display name as default; fall back to slug if missing
+val = c.get('LABEL_DISPLAY') or c.get('LABEL', '')
+print(val)
 " 2>/dev/null)"
 CFG_AID="$(python -c "
 from extractor.config import _load_cfg_file
@@ -59,39 +61,39 @@ print(c.get('ASSESSMENT_ID', ''))
 
 # ── [1/6] PROGRAMA ─────────────────────────────────────────────
 echo "[1/6] PROGRAMA"
-PROGRAM="$(osascript <<OSA 2>/dev/null
+PROGRAM_DISPLAY="$(osascript <<OSA 2>/dev/null
 try
     text returned of (display dialog "[1/6] PROGRAMA" & return & return & ¬
-        "Insira a sigla do programa em letras minúsculas e o número da edição." & return & ¬
-        "Exemplo: pggf2" ¬
+        "Insira a sigla do programa e o número da edição." & return & ¬
+        "Exemplo: PGGF2" ¬
         default answer "$CFG_PROGRAM" buttons {"Cancelar", "OK"} default button "OK")
 on error
     return ""
 end try
 OSA
 )"
-if [ -z "$PROGRAM" ]; then
+if [ -z "$PROGRAM_DISPLAY" ]; then
     echo "Cancelado."; read -rn 1 -s -p "Prima uma tecla para fechar..."; exit 0
 fi
-PROGRAM_SLUG="$(slugify_py "$PROGRAM")"
+PROGRAM_SLUG="$(slugify_py "$PROGRAM_DISPLAY")"
 
 # ── [2/6] ATIVIDADE ────────────────────────────────────────────
 echo "[2/6] ATIVIDADE"
-LABEL="$(osascript <<OSA 2>/dev/null
+LABEL_DISPLAY="$(osascript <<OSA 2>/dev/null
 try
     text returned of (display dialog "[2/6] ATIVIDADE" & return & return & ¬
-        "Título da atividade (usado como nome da pasta de output)." & return & ¬
-        "Exemplo: uc5-fintech" ¬
+        "Nome da unidade curricular (para relatórios e nome da pasta)." & return & ¬
+        "Exemplo: UC1 Mercados e Economia Financeira" ¬
         default answer "$CFG_LABEL" buttons {"Cancelar", "OK"} default button "OK")
 on error
     return ""
 end try
 OSA
 )"
-if [ -z "$LABEL" ]; then
+if [ -z "$LABEL_DISPLAY" ]; then
     echo "Cancelado."; read -rn 1 -s -p "Prima uma tecla para fechar..."; exit 0
 fi
-LABEL_SLUG="$(slugify_py "$LABEL")"
+LABEL_SLUG="$(slugify_py "$LABEL_DISPLAY")"
 
 # ── [3/6] ASSESSMENT ID ────────────────────────────────────────
 echo "[3/6] ASSESSMENT ID"
@@ -114,11 +116,36 @@ fi
 # ── Pasta de run partilhada ────────────────────────────────────
 RUN_DIR="$SCRIPT_DIR/output/$PROGRAM_SLUG/$LABEL_SLUG/$RUN_TS"
 echo
-echo "  Programa     : $PROGRAM  →  $PROGRAM_SLUG"
-echo "  Atividade    : $LABEL  →  $LABEL_SLUG"
+echo "  Programa     : $PROGRAM_DISPLAY  →  $PROGRAM_SLUG"
+echo "  Atividade    : $LABEL_DISPLAY  →  $LABEL_SLUG"
 echo "  Assessment ID: $AID"
 echo "  Run folder   : output/$PROGRAM_SLUG/$LABEL_SLUG/$RUN_TS"
 echo "------------------------------------------------------------"
+
+# ── Gravar valores no assessment.cfg ──────────────────────────
+python - "$PROGRAM_SLUG" "$LABEL_SLUG" "$LABEL_DISPLAY" "$AID" <<'PYEOF'
+import sys, re
+from pathlib import Path
+
+program, label, label_display, aid = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+cfg = Path("assessment.cfg")
+text = cfg.read_text(encoding="utf-8")
+
+def _set(text, key, value):
+    pattern = rf"^({re.escape(key)}\s*=).*$"
+    replacement = rf"\g<1>{value}"
+    new_text, n = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+    if n == 0:
+        new_text = text.rstrip("\n") + f"\n{key}={value}\n"
+    return new_text
+
+text = _set(text, "PROGRAM", program)
+text = _set(text, "LABEL", label)
+text = _set(text, "LABEL_DISPLAY", label_display)
+text = _set(text, "ASSESSMENT_ID", aid)
+cfg.write_text(text, encoding="utf-8")
+print("  assessment.cfg actualizado.")
+PYEOF
 
 # ── [4/6] GABARITO LW ─────────────────────────────────────────
 echo "[4/6] GABARITO LW"
