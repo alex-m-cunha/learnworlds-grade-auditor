@@ -48,14 +48,14 @@ from pathlib import Path
 from extractor.config import OUTPUT_DIR, ExtractorError, slugify
 from extractor.writers import write_csv, write_xlsx
 
-from .core import build_config_index, check_answer, join_key, norm, reconcile_grade, to_decimal
+from .core import build_config_index, build_merged_index, check_answer, join_key, norm, reconcile_grade, to_decimal
 
 REPORT_COLUMNS = [
     "assessment_id", "user_id", "username", "email",
     "blockId", "blockType", "question_number", "description",
     "submitted_answer", "configured_correct_answer", "configured_accepted_answers",
     "points", "max_points", "derived_score_status",
-    "verifiable", "is_correct", "flag",
+    "verifiable", "is_correct", "flag", "answer_matched_source",
 ]
 GRADE_COLUMNS = [
     "assessment_id", "user_id", "username", "email",
@@ -117,6 +117,7 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
         ]
         flag_labels = {
             "answer_accepted_but_zero": "Resposta aceite mas 0 pontos (`answer_accepted_but_zero`)",
+            "answer_correct_per_doc_but_zero": "Resposta correcta (gabarito docente) rejeitada pelo LW com 0 pontos — erro de parametrização (`answer_correct_per_doc_but_zero`) ⚠️",
             "answer_not_accepted_but_full": "Resposta não aceite mas nota máxima (`answer_not_accepted_but_full`)",
             "answer_accepted_but_partial": "Crédito parcial (`answer_accepted_but_partial`) ℹ️",
         }
@@ -324,7 +325,14 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
     exam_config = _read_csv(cfg_path)
     print(f"Loaded {len(submissions)} submission rows, {len(exam_config)} config rows.")
 
-    cfg_index = build_config_index(exam_config)
+    # Load answer key early so build_merged_index() can enrich the config index.
+    ak_rows: list = []
+    if run_dir:
+        ak_early_path = Path(run_dir) / "answer_key" / "manual_answer_key.csv"
+        if ak_early_path.exists():
+            ak_rows = _read_csv(str(ak_early_path))
+
+    cfg_index = build_merged_index(exam_config, ak_rows) if ak_rows else build_config_index(exam_config)
 
     # Optional official grades from course_grades, keyed by (assessment_id, user_id).
     grade_override = {}
@@ -366,6 +374,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "verifiable": chk["verifiable"],
             "is_correct": ("" if chk["is_correct"] is None else chk["is_correct"]),
             "flag": chk["flag"] or "",
+            "answer_matched_source": chk.get("answer_matched_source", ""),
         })
 
         # grade accumulator
@@ -448,15 +457,14 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "note": notes.get(q.get("reason"), ""),
         })
 
-    # ---- answer key stats (optional — present if extract_answer_key was run) ----
+    # ---- answer key stats (ak_rows loaded earlier for build_merged_index) ----
     answer_key_summary: dict = {}
-    ak_path = (Path(run_dir) / "answer_key" / "manual_answer_key.csv") if run_dir else None
-    if ak_path and ak_path.exists():
-        ak_rows = _read_csv(str(ak_path))
+    if ak_rows:
         from collections import Counter
         conf_counts = Counter(r.get("confidence", "") for r in ak_rows)
         match_counts = Counter(r.get("answers_match", "") for r in ak_rows)
         sources = sorted({r.get("source_doc", "") for r in ak_rows if r.get("source_doc")})
+        doc_override_count = sum(1 for v in cfg_index.values() if v.get("doc_overrides_lw"))
         answer_key_summary = {
             "questions": len(ak_rows),
             "confidence_breakdown": dict(conf_counts),
@@ -464,12 +472,14 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "discrepancies": match_counts.get("no", 0),
             "needs_review": sum(1 for r in ak_rows if r.get("needs_review") == "true"),
             "source_docs": sources,
+            "doc_override_count": doc_override_count,
         }
         print(
             f"Answer key: {len(ak_rows)} question(s), "
             f"high={conf_counts.get('high', 0)}, "
             f"unmatched={conf_counts.get('unmatched', 0)}, "
-            f"discrepancies={match_counts.get('no', 0)}."
+            f"discrepancies={match_counts.get('no', 0)}, "
+            f"doc_overrides={doc_override_count}."
         )
 
     # ---- write outputs ----

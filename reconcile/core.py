@@ -86,17 +86,69 @@ def build_config_index(exam_config_rows) -> dict:
             "accepted": _as_list(row.get("configured_accepted_answers_raw")),
             "correct_raw": row.get("configured_correct_answer_raw"),
             "description": row.get("description"),
+            "doc_correct_answer": None,
+            "doc_confidence": None,
+            "doc_overrides_lw": False,
         }
+    return index
+
+
+def build_merged_index(exam_config_rows, ak_rows) -> dict:
+    """Build config index enriched with teacher answer key (gabarito ID / Docente).
+
+    For questions where the teacher's doc disagrees with LW (answers_match=no)
+    and confidence is high or medium, sets doc_overrides_lw=True so check_answer()
+    can fall back to the teacher's intended answer when LW matching fails.
+
+    MCMA is excluded from override (doc_correct_answer for MCMA is a
+    semicolon-separated string that would need extra parsing).
+    Falls back to build_config_index() behaviour when ak_rows is empty.
+    """
+    index = build_config_index(exam_config_rows)
+    if not ak_rows:
+        return index
+
+    ak_by_key = {}
+    for row in ak_rows:
+        k = join_key(row.get("question_text", ""))
+        if k:
+            ak_by_key[k] = row
+
+    for key, entry in index.items():
+        ak = ak_by_key.get(key)
+        if ak is None:
+            continue
+
+        confidence = ak.get("confidence", "")
+        answers_match = ak.get("answers_match", "")
+        block_type = (entry.get("blockType") or "").lower()
+        doc_answer = ak.get("doc_correct_answer", "")
+
+        entry["doc_correct_answer"] = doc_answer or None
+        entry["doc_confidence"] = confidence
+
+        # Override only when doc has a concrete answer, disagrees with LW,
+        # confidence is actionable (high/medium), and not MCMA.
+        if (
+            doc_answer
+            and answers_match == "no"
+            and confidence in ("high", "medium")
+            and block_type != "mcma"
+        ):
+            entry["doc_overrides_lw"] = True
+
     return index
 
 
 def check_answer(block_type, answer, points, max_points, cfg_entry):
     """Apply the contradiction rule to one (learner, question) block.
 
-    Returns dict: verifiable, is_correct, flag, configured_correct, accepted.
+    Returns dict: verifiable, is_correct, flag, configured_correct, accepted,
+    answer_matched_source.
     - verifiable: "yes" | "no_config_match" | "unverifiable_mcma" | "no_answer_key"
-    - flag: None | "answer_accepted_but_zero" | "answer_not_accepted_but_full"
-            | "answer_accepted_but_partial"
+    - flag: None | "answer_accepted_but_zero" | "answer_correct_per_doc_but_zero"
+            | "answer_not_accepted_but_full" | "answer_accepted_but_partial"
+    - answer_matched_source: "lw" | "doc" | ""
     """
     result = {
         "verifiable": "yes",
@@ -104,6 +156,7 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
         "flag": None,
         "configured_correct": "",
         "accepted": [],
+        "answer_matched_source": "",
     }
     if cfg_entry is None:
         result["verifiable"] = "no_config_match"
@@ -127,10 +180,21 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
             result["verifiable"] = "unverifiable_mcma"
             return result
         is_correct = selected == accepted_keys
+        answer_matched_source = "lw" if is_correct else ""
     else:
         is_correct = join_key(answer) in accepted_keys
+        answer_matched_source = "lw" if is_correct else ""
+
+        # Doc fallback: when LW didn't match and teacher's doc overrides LW config,
+        # check if the student answered what the teacher intended.
+        if not is_correct and cfg_entry.get("doc_overrides_lw") and cfg_entry.get("doc_correct_answer"):
+            doc_key = join_key(cfg_entry["doc_correct_answer"])
+            if doc_key and join_key(answer) == doc_key:
+                is_correct = True
+                answer_matched_source = "doc"
 
     result["is_correct"] = is_correct
+    result["answer_matched_source"] = answer_matched_source
 
     pts = to_decimal(points)
     mx = to_decimal(max_points)
@@ -138,7 +202,11 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
         return result  # can't compare scoring; correctness still reported
 
     if is_correct and pts == 0:
-        result["flag"] = "answer_accepted_but_zero"
+        # Parametrization error: student followed teacher's intent but LW rejected it
+        if answer_matched_source == "doc":
+            result["flag"] = "answer_correct_per_doc_but_zero"
+        else:
+            result["flag"] = "answer_accepted_but_zero"
     elif (not is_correct) and mx > 0 and pts == mx:
         result["flag"] = "answer_not_accepted_but_full"
     elif is_correct and 0 < pts < mx:

@@ -62,7 +62,10 @@ REGRAS SOBRE OS DADOS:
 - As perguntas em `unverifiable_questions` (sem gabarito no LW) também NÃO foram processadas
   pelo gabarito ID / Docente — portanto NÃO têm resposta correcta em NENHUMA fonte disponível.
   Dizer isso claramente: "X perguntas sem resposta correcta definida em qualquer gabarito".
-- `answer_accepted_but_zero`: resposta correcta mas 0 pontos — PROBLEMA REAL, correcção urgente.
+- `answer_accepted_but_zero`: resposta correcta (gabarito LW) mas 0 pontos — PROBLEMA REAL, correcção urgente.
+- `answer_correct_per_doc_but_zero`: aluno respondeu o que o docente pretendia (gabarito ID /
+  Docente) mas o LW não aceitou e deu 0 pontos — ERRO DE PARAMETRIZAÇÃO no LW, o mais grave de
+  todos. Usar linguagem de urgência máxima.
 - `answer_key_real_discrepancies`: gabarito LW e gabarito ID / Docente divergem — PROBLEMA REAL.
 - `answer_key_doc_not_found`: pergunta não encontrada no gabarito ID / Docente — o gabarito LW
   está correcto, mas não há validação cruzada do docente para esta pergunta.
@@ -124,12 +127,20 @@ Se correu:
 
 ## ⚠️ Problemas a corrigir
 
-[H3 por cada problema, em linguagem natural sem jargão.
-- Respostas correctas com 0 pontos → título "Resposta certa mas pontuação zero": listar pergunta
-  (número + início do enunciado), alunos (nome + resposta enviada + pontos atribuídos).
-- Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
-  resposta do gabarito ID / Docente.
-Se não houver: "Nenhum problema identificado."]
+[H3 por cada tipo de problema, em linguagem natural sem jargão. Ordem de gravidade decrescente:
+
+1. Se `doc_override_flags` não vazio → secção "Erro de parametrização — resposta correcta
+   rejeitada pelo LearnWorlds": explicar que o LearnWorlds tinha a opção errada configurada,
+   o aluno respondeu conforme a intenção do docente mas levou 0 pontos. Listar pergunta
+   (número + início do enunciado) e alunos afectados (nome + resposta + pontos). Máxima urgência.
+
+2. Se `flagged_rows` contém flag="answer_accepted_but_zero" → secção "Resposta certa mas
+   pontuação zero": listar pergunta e alunos afectados.
+
+3. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
+   resposta do gabarito ID / Docente.
+
+Se não houver nenhum: "Nenhum problema identificado."]
 
 ---
 
@@ -282,7 +293,7 @@ def _build_context(run_dir: Path) -> dict:
     # Write question_index.csv
     _write_question_index(run_dir, questions_index)
 
-    # Flagged rows with student detail
+    # Flagged rows with student detail — split by flag type
     flagged = [
         {
             "question_number": r.get("question_number", ""),
@@ -296,6 +307,19 @@ def _build_context(run_dir: Path) -> dict:
         }
         for r in report_rows
         if r.get("flag", "").strip()
+    ]
+
+    # Parametrization error: student followed teacher's intent but LW rejected it
+    doc_override_flags = [
+        {
+            "question_number": r.get("question_number", ""),
+            "question_text": r.get("description", "")[:150],
+            "student_name": r.get("username", ""),
+            "submitted_answer": r.get("submitted_answer", ""),
+            "points": r.get("points", ""),
+        }
+        for r in report_rows
+        if r.get("flag", "").strip() == "answer_correct_per_doc_but_zero"
     ]
 
     # Manual review queue — unverifiable questions (no question_number in LW export)
@@ -450,6 +474,7 @@ def _build_context(run_dir: Path) -> dict:
         "unverifiable_questions": review_queue,
         # Flags
         "flagged_rows": flagged,
+        "doc_override_flags": doc_override_flags,
         "flag_counts": summary.get("flag_counts", {}),
         # Consistency (same answer, different points across students)
         "inconsistent_scoring_questions": summary.get("inconsistent_scoring_questions", 0),
