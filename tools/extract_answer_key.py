@@ -275,7 +275,12 @@ def _run_color_hex(run) -> str | None:
 
 
 def _is_para_bold(para) -> bool:
-    runs = [r for r in para.runs if r.text]
+    try:
+        from docx.text.run import Run
+    except ImportError:
+        return False
+    runs = [Run(e, para) for t, e in _iter_inline_items(para._p) if t == "r"]
+    runs = [r for r in runs if r.text]
     if not runs:
         return False
     bold_chars = sum(len(r.text) for r in runs if r.bold)
@@ -284,13 +289,23 @@ def _is_para_bold(para) -> bool:
 
 
 def _para_to_line(para) -> str:
+    try:
+        from docx.text.run import Run
+    except ImportError:
+        Run = None
+
     style_name = (para.style.name if para.style else "") or ""
     is_normal_style = style_name.lower() in (
         "normal", "default paragraph style", "", "body text", "no spacing",
     )
 
     parts: list[str] = []
-    for run in para.runs:
+    for tag, child in _iter_inline_items(para._p):
+        if tag != "r":
+            continue
+        run = Run(child, para) if Run else None
+        if run is None:
+            continue
         text = run.text
         if not text:
             continue
@@ -343,10 +358,65 @@ def _iter_paras(elem):
             yield child
 
 
+def _iter_inline_items(p_elem):
+    """Yield (tag, element) for inline children of <w:p>, recursively unwrapping inline <w:sdt>."""
+    for child in p_elem:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "sdt":
+            content = _sdt_content(child)
+            if content is not None:
+                yield from _iter_inline_items(content)
+        else:
+            yield tag, child
+
+
+def _render_table_rows(tbl_elem, doc) -> list[str]:
+    """Return table content as a list of row strings, recursively handling nested tables.
+
+    Cells with nested tables: the nested rows are appended immediately after the
+    containing row so the LLM sees a flat list of rows in document order.
+    """
+    from docx.text.paragraph import Paragraph
+
+    rows: list[str] = []
+    for tag_row, tr_elem in _iter_block_items(tbl_elem):
+        if tag_row != "tr":
+            continue
+        row_cells: list[str] = []
+        seen: set[int] = set()
+        nested_after: list[list[str]] = []
+
+        for tag_c, tc_elem in _iter_block_items(tr_elem):
+            if tag_c != "tc":
+                continue
+            cid = id(tc_elem)
+            if cid in seen:
+                continue
+            seen.add(cid)
+
+            para_parts: list[str] = []
+            for btag, bchild in _iter_block_items(tc_elem):
+                if btag == "p":
+                    line = _para_to_line(Paragraph(bchild, doc))
+                    if line:
+                        para_parts.append(line)
+                elif btag == "tbl":
+                    nested_after.append(_render_table_rows(bchild, doc))
+
+            row_cells.append(" | ".join(para_parts))
+
+        row_text = " | ".join(c for c in row_cells if c)
+        if row_text:
+            rows.append(row_text)
+        for nested in nested_after:
+            rows.extend(nested)
+
+    return rows
+
+
 def extract_doc_text(path: Path) -> str:
     try:
         from docx import Document
-        from docx.table import Table
         from docx.text.paragraph import Paragraph
     except ImportError as exc:
         raise SystemExit(
@@ -364,29 +434,8 @@ def extract_doc_text(path: Path) -> str:
                 sections.append(line)
 
         elif tag == "tbl":
-            tbl = Table(block, doc)
-            table_lines = ["[TABLE]"]
-            for tag_row, tr_elem in _iter_block_items(tbl._tbl):
-                if tag_row != "tr":
-                    continue
-                cells: list[str] = []
-                seen: set[int] = set()
-                for tag_c, tc_elem in _iter_block_items(tr_elem):
-                    if tag_c != "tc":
-                        continue
-                    cid = id(tc_elem)
-                    if cid in seen:
-                        continue
-                    seen.add(cid)
-                    cell_parts = [
-                        _para_to_line(Paragraph(p, doc))
-                        for p in _iter_paras(tc_elem)
-                    ]
-                    cell_text = " | ".join(p for p in cell_parts if p)
-                    cells.append(cell_text)
-                table_lines.append(" | ".join(cells))
-            table_lines.append("[/TABLE]")
-            sections.append("\n".join(table_lines))
+            inner = _render_table_rows(block, doc)
+            sections.append("[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
 
     return "\n".join(sections)
 
