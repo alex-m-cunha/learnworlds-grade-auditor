@@ -87,16 +87,13 @@ Avaliação da unidade curricular [label_display] no âmbito do programa [progra
 [Bullets imediatamente a seguir — SEM "Dados:", SEM "Pontos de atenção:", SEM "Conclusão:":]
 
 - O teste contém um total de [active_questions_count] perguntas.
+- [Se unverifiable_questions não for vazio:] Há [N] pergunta(s) que não foram detectadas em nenhum gabarito.
 - O gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
-- O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count]
-  perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio]:
-    - Pergunta [Q número]: "[primeiros 80 chars do enunciado]"
-    [uma sub-linha por cada item de answer_key_doc_not_found]
+- O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count] perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio].
 - Foram validadas [answer_key_matched_count] perguntas cruzando com o gabarito ID / Docente.
-- [Se unverifiable_questions não for vazio:] Há [N] pergunta(s) que não foram detectadas em
-  nenhum gabarito:
-    - [Para cada item de unverifiable_questions: "(sem número atribuído): [primeiros 80 chars]"]
 - [Se flagged_rows não vazio:] [N] aluno(s) têm respostas correctas com 0 pontos atribuídos.
+
+NÃO incluir sub-listas de perguntas nesta secção — o detalhe fica nas secções abaixo.
 
 ---
 
