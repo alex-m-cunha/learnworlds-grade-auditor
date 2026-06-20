@@ -215,6 +215,151 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
 
 
 # ---------------------------------------------------------------------------
+# Inferred answer checking (fillInTheBlank / match orphan questions)
+# ---------------------------------------------------------------------------
+
+def build_inferred_index(inferred_rows) -> dict:
+    """Map join_key(question_text) → inferred entry for orphan questions."""
+    index = {}
+    for row in inferred_rows:
+        k = join_key(row.get("question_text", ""))
+        if k:
+            index[k] = {
+                "blockType": row.get("blockType", ""),
+                "question_text": row.get("question_text", ""),
+                "inferred_correct_answer": row.get("doc_correct_answer", ""),
+                "confidence": row.get("confidence", "unmatched"),
+                "source_doc": row.get("source_doc", ""),
+            }
+    return index
+
+
+_MIN_VARIANT_KEY_LEN = 15  # variants shorter than this are too generic for containment check
+
+
+def _check_fill_in_blank(student_answer: str, inferred_answer: str) -> tuple[bool, str | None]:
+    """Check fillInTheBlank: each blank against its accepted variants.
+
+    Inferred format: "var1; var2 | var3; var4" (blanks by " | ", variants by "; ")
+    Student format:  "answer1 | answer2" (blanks by " | ")
+
+    Returns (is_correct, flag) where flag may be "fill_in_blank_over_answered" when
+    a student wrote a correct variant but with extra surrounding text (LW rejects
+    because it expects an exact match). Only triggered for variants ≥ _MIN_VARIANT_KEY_LEN
+    chars to avoid false positives with short generic words like "capital".
+    """
+    inferred_blanks = [b.strip() for b in inferred_answer.split(" | ")]
+    student_blanks = [b.strip() for b in student_answer.split(" | ")]
+    if len(student_blanks) != len(inferred_blanks):
+        return False, None
+    all_correct = True
+    any_over_answered = False
+    for s_blank, i_blank in zip(student_blanks, inferred_blanks):
+        s_key = join_key(s_blank)
+        variants = [join_key(v.strip()) for v in i_blank.split(";")]
+        if s_key in variants:
+            continue
+        all_correct = False
+        if any(len(v) >= _MIN_VARIANT_KEY_LEN and v in s_key for v in variants):
+            any_over_answered = True
+    flag = "fill_in_blank_over_answered" if any_over_answered else None
+    return all_correct, flag
+
+
+def _check_match(student_answer: str, inferred_answer: str) -> bool:
+    """Check match question: parse pairs and compare dicts.
+
+    Inferred format: "A → B; C → D" (pairs by "; ", within pair by first " → ")
+    Student format (LW API): "A / B, A / B" (pairs by ", ", within pair by " / ")
+
+    Column B can contain commas (e.g. "Fixa hoje a taxa de câmbio, eliminando..."),
+    so we cannot split naively by ",". Instead we split by " / " and use rfind(", ")
+    to find where B ends and the next A begins.
+    """
+    inferred_pairs: dict = {}
+    for pair in inferred_answer.split(";"):
+        pair = pair.strip()
+        if "→" in pair:
+            a, _, b = pair.partition("→")
+            inferred_pairs[join_key(a)] = join_key(b)
+    if not inferred_pairs:
+        return False
+
+    parts = student_answer.split(" / ")
+    if len(parts) < 2:
+        return False
+
+    student_pairs: dict = {}
+    current_a = parts[0].strip()
+    for i in range(1, len(parts)):
+        chunk = parts[i]
+        if i < len(parts) - 1:
+            # B runs until the last ", " which precedes the next Column A label
+            last_comma = chunk.rfind(", ")
+            if last_comma >= 0:
+                b_raw = chunk[:last_comma].strip()
+                current_a_next = chunk[last_comma + 2:].strip()
+            else:
+                b_raw = chunk.strip()
+                current_a_next = ""
+        else:
+            b_raw = chunk.strip()
+            current_a_next = ""
+        student_pairs[join_key(current_a)] = join_key(b_raw)
+        current_a = current_a_next
+
+    return student_pairs == inferred_pairs
+
+
+def check_inferred_answer(block_type: str, answer: str, points, max_points, inferred_entry: dict) -> dict:
+    """Check a student answer against an LLM-inferred correct answer.
+
+    For orphan questions (fillInTheBlank, match) not in LW exam config.
+    Returns same dict structure as check_answer().
+    verifiable: "inferred" (high/medium confidence) | "inferred_low_confidence" (low/unmatched)
+    """
+    result = {
+        "verifiable": "inferred",
+        "is_correct": None,
+        "flag": None,
+        "configured_correct": inferred_entry.get("inferred_correct_answer", ""),
+        "accepted": [],
+        "answer_matched_source": "inferred",
+    }
+
+    confidence = inferred_entry.get("confidence", "unmatched")
+    inferred_answer = inferred_entry.get("inferred_correct_answer", "")
+
+    if confidence not in ("high", "medium") or not inferred_answer:
+        result["verifiable"] = "inferred_low_confidence"
+        result["answer_matched_source"] = ""
+        return result
+
+    bt = (block_type or "").lower()
+    blank_flag: str | None = None
+    if bt == "fillintheblankblock":
+        is_correct, blank_flag = _check_fill_in_blank(answer or "", inferred_answer)
+    elif bt == "match":
+        is_correct = _check_match(answer or "", inferred_answer)
+    else:
+        is_correct = join_key(answer or "") == join_key(inferred_answer)
+
+    result["is_correct"] = is_correct
+
+    pts = to_decimal(points)
+    mx = to_decimal(max_points)
+    if pts is not None and mx is not None:
+        if is_correct and pts == 0:
+            result["flag"] = "answer_correct_per_doc_but_zero"
+        elif not is_correct and mx > 0 and pts == mx:
+            result["flag"] = "answer_not_accepted_but_full"
+        elif blank_flag:
+            result["flag"] = blank_flag
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Grade reconciliation (Σpoints/Σmax*100 vs official grade)
 # ---------------------------------------------------------------------------
 def reconcile_grade(sum_points: Decimal, sum_max: Decimal, official_grade):

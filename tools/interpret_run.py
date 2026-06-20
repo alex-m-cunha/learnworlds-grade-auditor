@@ -66,9 +66,21 @@ REGRAS SOBRE OS DADOS:
 - `answer_correct_per_doc_but_zero`: aluno respondeu o que o docente pretendia (gabarito ID /
   Docente) mas o LW não aceitou e deu 0 pontos — ERRO DE PARAMETRIZAÇÃO no LW, o mais grave de
   todos. Usar linguagem de urgência máxima.
+- `fill_in_blank_over_answered` (em `over_answered_flags`): pergunta de preenchimento de lacunas
+  onde o aluno escreveu a resposta correcta mas com texto adicional (ex: deu o equivalente em
+  inglês e português na mesma lacuna). O LearnWorlds exige correspondência exacta e rejeitou.
+  Descrever como "resposta correcta com texto a mais — o sistema de avaliação não aceitou".
+  Agrupar por pergunta e listar cada aluno afectado com a resposta que submeteu.
+  Grau de urgência 🔴 — impacta notas.
 - `answer_key_real_discrepancies`: gabarito LW e gabarito ID / Docente divergem — PROBLEMA REAL.
 - `answer_key_doc_not_found`: pergunta não encontrada no gabarito ID / Docente — o gabarito LW
   está correcto, mas não há validação cruzada do docente para esta pergunta.
+- `inferred_ran=true` + `inferred_questions_detail`: existem perguntas de preenchimento de
+  lacunas ou correspondência cujo gabarito foi inferido pelo LLM a partir do gabarito ID / Docente.
+  Estas NÃO estão no gabarito do LW — o LW não as exporta. Mencionar sempre que:
+  (1) a resposta usada é uma inferência automática, não um gabarito oficial;
+  (2) a verificação humana é necessária antes de tomar decisões sobre notas.
+  Se `inferred_reconciled_questions` não vazio: referir que foram usadas na reconciliação.
 - Next steps: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
 
@@ -90,7 +102,8 @@ Avaliação da unidade curricular [label_display] no âmbito do programa [progra
 [Bullets imediatamente a seguir — SEM "Dados:", SEM "Pontos de atenção:", SEM "Conclusão:":]
 
 - O teste contém um total de [active_questions_count] perguntas.
-- [Se unverifiable_questions não for vazio:] Há [N] pergunta(s) que não foram detectadas em nenhum gabarito.
+- [Se unverifiable_questions não for vazio E reason="no_config_match" E NÃO há inferência para essas perguntas:] Há [N] pergunta(s) que não foram detectadas em nenhum gabarito.
+- [Se inferred_questions_detail não vazio:] Há [N] pergunta(s) sem gabarito no LW, verificadas por inferência automática a partir do gabarito ID / Docente (confirmação humana recomendada).
 - O gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
 - O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count] perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio].
 - Foram validadas [answer_key_matched_count] perguntas cruzando com o gabarito ID / Docente.
@@ -134,10 +147,17 @@ Se correu:
    o aluno respondeu conforme a intenção do docente mas levou 0 pontos. Listar pergunta
    (número + início do enunciado) e alunos afectados (nome + resposta + pontos). Máxima urgência.
 
-2. Se `flagged_rows` contém flag="answer_accepted_but_zero" → secção "Resposta certa mas
+2. Se `over_answered_flags` não vazio → secção "Resposta correcta com texto a mais — rejeitada
+   pelo LearnWorlds": explicar em linguagem natural que estes alunos escreveram a resposta certa
+   mas acrescentaram texto adicional (ex: deram o nome em inglês e português na mesma resposta),
+   e que o sistema de avaliação exige uma correspondência exacta. Agrupar por pergunta (usar o
+   início do enunciado). Para cada aluno: nome, resposta submetida, pontos obtidos vs máximo.
+   Urgência 🔴.
+
+3. Se `flagged_rows` contém flag="answer_accepted_but_zero" → secção "Resposta certa mas
    pontuação zero": listar pergunta e alunos afectados.
 
-3. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
+4. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
    resposta do gabarito ID / Docente.
 
 Se não houver nenhum: "Nenhum problema identificado."]
@@ -146,13 +166,23 @@ Se não houver nenhum: "Nenhum problema identificado."]
 
 ## ℹ️ Perguntas sem gabarito disponível
 
-ATENÇÃO: existem 2 situações DISTINTAS — não misturar. NÃO escrever os nomes dos campos
-("unverifiable_questions", "answer_key_doc_not_found") no output — usar apenas os títulos:
+ATENÇÃO: existem 3 situações DISTINTAS — não misturar. NÃO escrever os nomes dos campos
+no output — usar apenas os títulos abaixo:
 
 **Sem resposta em nenhum gabarito:**
-[Perguntas de `unverifiable_questions` — sem gabarito em NENHUMA fonte. Uma linha por pergunta:]
+[Perguntas de `unverifiable_questions` onde reason="no_config_match" — sem gabarito em NENHUMA
+fonte. Uma linha por pergunta:]
 - **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar
   automaticamente a resposta correcta desta pergunta. Recomenda-se verificação manual.
+
+**Resposta inferida automaticamente (requer confirmação humana):**
+[Se `inferred_ran=true` e `inferred_questions_detail` não vazio: listar estas perguntas.
+São perguntas de preenchimento de lacunas ou correspondência cujo gabarito NÃO está no LW
+mas foi inferido pelo LLM a partir do gabarito ID / Docente. Uma linha por pergunta:]
+- **(sem número atribuído)**: "[primeiros 80 chars]" — Resposta inferida: "[doc_correct_answer]"
+  (confiança: [confidence]). Esta inferência foi usada na reconciliação mas requer confirmação
+  humana — não é um gabarito oficial.
+[Se `inferred_questions_detail` vazio ou `inferred_ran=false`: omitir este bloco.]
 
 **Presentes no gabarito LW mas não encontradas no gabarito ID / Docente:**
 [Perguntas de `answer_key_doc_not_found` — TÊM resposta no gabarito LW. Uma linha por pergunta:]
@@ -275,16 +305,23 @@ def _build_context(run_dir: Path) -> dict:
     # Load all CSVs
     config_rows = _read_csv(run_dir / "exam_config" / "exam_config_as_is.csv")
     ak_rows = _read_csv(run_dir / "answer_key" / "manual_answer_key.csv")
+    inferred_rows = _read_csv(run_dir / "answer_key" / "inferred_answer_key.csv")
     report_rows = _read_csv(run_dir / "reconcile" / "reconciliation_report" / "reconciliation_report.csv")
     queue_rows = _read_csv(run_dir / "reconcile" / "manual_review_queue" / "manual_review_queue.csv")
     grade_rows = _read_csv(run_dir / "reconcile" / "grade_reconciliation" / "grade_reconciliation.csv")
 
-    # Active questions: named (from reconciliation_report) + unnamed (no_config_match from queue)
+    # Active questions: named (from reconciliation_report) + unnamed (no question_number in LW)
     active_qns = sorted(
         {r.get("question_number", "").strip() for r in report_rows if r.get("question_number", "").strip()},
         key=lambda x: int(x) if x.isdigit() else 999,
     )
-    unnamed_count = len(queue_rows)  # fillInTheBlankBlock/match — no question_number in export
+    # Unnamed = questions with no LW question_number: queue (no_config_match) + inferred
+    inferred_unnamed = len({
+        r.get("description", "")
+        for r in report_rows
+        if r.get("verifiable", "") == "inferred" and r.get("description", "")
+    })
+    unnamed_count = len(queue_rows) + inferred_unnamed
     active_count = len(active_qns) + unnamed_count
 
     # Build cross-referenced question index
@@ -320,6 +357,20 @@ def _build_context(run_dir: Path) -> dict:
         }
         for r in report_rows
         if r.get("flag", "").strip() == "answer_correct_per_doc_but_zero"
+    ]
+
+    # Over-answered fill-in-blank: student wrote correct answer with extra text; LW rejected
+    over_answered_flags = [
+        {
+            "question_number": r.get("question_number", "") or "(sem número no LW)",
+            "question_text": r.get("description", "")[:150],
+            "student_name": r.get("username", ""),
+            "submitted_answer": r.get("submitted_answer", ""),
+            "points": r.get("points", ""),
+            "max_points": r.get("max_points", ""),
+        }
+        for r in report_rows
+        if r.get("flag", "").strip() == "fill_in_blank_over_answered"
     ]
 
     # Manual review queue — unverifiable questions (no question_number in LW export)
@@ -448,6 +499,32 @@ def _build_context(run_dir: Path) -> dict:
     # Answer key summary stats
     ak_summary = summary.get("answer_key", {})
 
+    # Inferred questions: orphan questions resolved by LLM from Word doc
+    inferred_summary = ak_summary.get("inferred", {})
+    inferred_questions_detail = [
+        {
+            "blockType": r.get("blockType", ""),
+            "question_text": r.get("question_text", "")[:200],
+            "doc_correct_answer": r.get("doc_correct_answer", ""),
+            "confidence": r.get("confidence", ""),
+            "notes": r.get("notes", ""),
+            "source_doc": r.get("source_doc", ""),
+        }
+        for r in inferred_rows
+    ]
+    # Unique inferred questions that were actually reconciled (verifiable="inferred")
+    inferred_reconciled_questions: list[dict] = []
+    _seen_inferred: set[str] = set()
+    for r in report_rows:
+        if r.get("verifiable", "") == "inferred":
+            desc = r.get("description", "")
+            if desc not in _seen_inferred:
+                _seen_inferred.add(desc)
+                inferred_reconciled_questions.append({
+                    "question_text": desc[:150],
+                    "blockType": r.get("blockType", ""),
+                })
+
     return {
         "assessment_type": "Teste de Avaliação",
         "program": program,
@@ -475,6 +552,7 @@ def _build_context(run_dir: Path) -> dict:
         # Flags
         "flagged_rows": flagged,
         "doc_override_flags": doc_override_flags,
+        "over_answered_flags": over_answered_flags,
         "flag_counts": summary.get("flag_counts", {}),
         # Consistency (same answer, different points across students)
         "inconsistent_scoring_questions": summary.get("inconsistent_scoring_questions", 0),
@@ -485,6 +563,11 @@ def _build_context(run_dir: Path) -> dict:
         "answer_key_matched_count": ak_matched_count,
         "answer_key_real_discrepancies": ak_real_discrepancies,
         "answer_key_doc_not_found": ak_doc_not_found,
+        # Inferred answers (fillInTheBlank / match — not in LW export)
+        "inferred_ran": bool(inferred_rows),
+        "inferred_summary": inferred_summary,
+        "inferred_questions_detail": inferred_questions_detail,
+        "inferred_reconciled_questions": inferred_reconciled_questions,
         # Full question index (consistent numbering for LLM)
         "questions_index": {
             qn: {k: v for k, v in q.items() if k != "question_number"}
@@ -548,6 +631,7 @@ def run(run_dir_str: str, model: str, output: str | None = None) -> None:
         f"  Perguntas activas: {context['active_questions_count']}  |  "
         f"Flags: {len(context['flagged_rows'])}  |  "
         f"Não verificáveis: {context['unverifiable_count']} linhas  |  "
+        f"Inferidas: {len(context['inferred_questions_detail'])}  |  "
         f"Discrepâncias gabarito: {len(context['answer_key_real_discrepancies'])}"
     )
     print(f"A chamar OpenAI ({effective_model})...")
