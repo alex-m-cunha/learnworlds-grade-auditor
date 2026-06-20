@@ -311,6 +311,38 @@ def _para_to_line(para) -> str:
     return line
 
 
+_NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _sdt_content(elem):
+    """Return the <w:sdtContent> child of an <w:sdt> element, or None."""
+    return elem.find(f"{{{_NS_W}}}sdtContent")
+
+
+def _iter_block_items(parent):
+    """Yield (tag, element) for block-level children, recursively unwrapping <w:sdt>."""
+    for child in parent:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "sdt":
+            content = _sdt_content(child)
+            if content is not None:
+                yield from _iter_block_items(content)
+        else:
+            yield tag, child
+
+
+def _iter_paras(elem):
+    """Yield <w:p> elements from elem, recursively unwrapping <w:sdt> containers."""
+    for child in elem:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "sdt":
+            content = _sdt_content(child)
+            if content is not None:
+                yield from _iter_paras(content)
+        elif tag == "p":
+            yield child
+
+
 def extract_doc_text(path: Path) -> str:
     try:
         from docx import Document
@@ -324,9 +356,7 @@ def extract_doc_text(path: Path) -> str:
     doc = Document(path)
     sections: list[str] = []
 
-    for block in doc.element.body:
-        tag = block.tag.split("}")[-1] if "}" in block.tag else block.tag
-
+    for tag, block in _iter_block_items(doc.element.body):
         if tag == "p":
             para = Paragraph(block, doc)
             line = _para_to_line(para)
@@ -336,15 +366,22 @@ def extract_doc_text(path: Path) -> str:
         elif tag == "tbl":
             tbl = Table(block, doc)
             table_lines = ["[TABLE]"]
-            for row in tbl.rows:
+            for tag_row, tr_elem in _iter_block_items(tbl._tbl):
+                if tag_row != "tr":
+                    continue
                 cells: list[str] = []
                 seen: set[int] = set()
-                for cell in row.cells:
-                    cid = id(cell._element)
+                for tag_c, tc_elem in _iter_block_items(tr_elem):
+                    if tag_c != "tc":
+                        continue
+                    cid = id(tc_elem)
                     if cid in seen:
                         continue
                     seen.add(cid)
-                    cell_parts = [_para_to_line(p) for p in cell.paragraphs]
+                    cell_parts = [
+                        _para_to_line(Paragraph(p, doc))
+                        for p in _iter_paras(tc_elem)
+                    ]
                     cell_text = " | ".join(p for p in cell_parts if p)
                     cells.append(cell_text)
                 table_lines.append(" | ".join(cells))
