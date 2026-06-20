@@ -118,6 +118,7 @@ def load_config(require_live: bool = True) -> dict:
         "course_id": _get("COURSE_ID"),
         "label": _get("LABEL"),
         "program": _get("PROGRAM"),
+        "label_display": _get("LABEL_DISPLAY"),
     }
 
     if require_live:

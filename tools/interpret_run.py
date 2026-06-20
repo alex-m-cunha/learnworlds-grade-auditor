@@ -59,9 +59,6 @@ REGRAS GERAIS:
 - Nunca escrever "documento Word" — usar sempre "gabarito ID / Docente".
 
 REGRAS SOBRE OS DADOS:
-- As perguntas em `unverifiable_questions` (sem gabarito no LW) também NÃO foram processadas
-  pelo gabarito ID / Docente — portanto NÃO têm resposta correcta em NENHUMA fonte disponível.
-  Dizer isso claramente: "X perguntas sem resposta correcta definida em qualquer gabarito".
 - `answer_accepted_but_zero`: resposta correcta (gabarito LW) mas 0 pontos — PROBLEMA REAL, correcção urgente.
 - `answer_correct_per_doc_but_zero`: aluno respondeu o que o docente pretendia (gabarito ID /
   Docente) mas o LW não aceitou e deu 0 pontos — ERRO DE PARAMETRIZAÇÃO no LW, o mais grave de
@@ -72,20 +69,19 @@ REGRAS SOBRE OS DADOS:
   aqui o aluno TEM pontos. Descrever como "resposta não reconhecida pelo gabarito mas com pontuação
   completa atribuída — requer verificação". Urgência 🟡.
 - `fill_in_blank_over_answered` (em `over_answered_flags`): pergunta de preenchimento de lacunas
-  onde o aluno escreveu a resposta correcta mas com texto adicional (ex: deu o equivalente em
-  inglês e português na mesma lacuna). O LearnWorlds exige correspondência exacta e rejeitou.
-  Descrever como "resposta correcta com texto a mais — o sistema de avaliação não aceitou".
-  Agrupar por pergunta e listar cada aluno afectado com a resposta que submeteu.
+  onde o aluno escreveu a resposta correcta mas com texto adicional. O LearnWorlds exige
+  correspondência exacta e rejeitou. Descrever como "resposta correcta com texto a mais — o sistema
+  de avaliação não aceitou". Agrupar por pergunta e listar cada aluno afectado com a resposta.
   Grau de urgência 🔴 — impacta notas.
-- `answer_key_real_discrepancies`: gabarito LW e gabarito ID / Docente divergem — PROBLEMA REAL.
-- `answer_key_doc_not_found`: pergunta não encontrada no gabarito ID / Docente — o gabarito LW
-  está correcto, mas não há validação cruzada do docente para esta pergunta.
-- `inferred_ran=true` + `inferred_questions_detail`: existem perguntas de preenchimento de
-  lacunas ou correspondência cujo gabarito foi inferido pelo LLM a partir do gabarito ID / Docente.
-  Estas NÃO estão no gabarito do LW — o LW não as exporta. Mencionar sempre que:
-  (1) a resposta usada é uma inferência automática, não um gabarito oficial;
-  (2) a verificação humana é necessária antes de tomar decisões sobre notas.
-  Se `inferred_reconciled_questions` não vazio: referir que foram usadas na reconciliação.
+- `answer_key_real_discrepancies`: gabarito LW e gabarito ID / Docente divergem — o gabarito ID /
+  Docente detectou uma possível parametrização errada no LW. PROBLEMA REAL — o LW pode estar a
+  penalizar respostas correctas. Listar com urgência 🔴.
+- `answer_key_doc_not_found`: pergunta presente no gabarito LW mas não encontrada no gabarito ID /
+  Docente — sem validação cruzada para esta pergunta.
+- `inferred_questions_detail`: perguntas de preenchimento de lacunas ou correspondência cujo
+  gabarito NÃO existe no LW — foi inferido automaticamente a partir do gabarito ID / Docente e
+  USADO na reconciliação. Não é um gabarito oficial: requer confirmação humana.
+- `unverifiable_questions`: perguntas SEM gabarito em QUALQUER fonte — não verificadas de todo.
 - Next steps: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
 
@@ -101,19 +97,26 @@ FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
 ## Resumo
 
-[1 frase de abertura SEM label — ex: "Este relatório refere-se à auditoria de um Teste de
-Avaliação da unidade curricular [label_display] no âmbito do programa [program_display]."]
+[1 frase de abertura: "Este relatório refere-se à auditoria de um Teste de Avaliação da unidade
+curricular [label_display] no âmbito do programa [program_display]."]
 
-[Bullets imediatamente a seguir — SEM "Dados:", SEM "Pontos de atenção:", SEM "Conclusão:":]
+[Bullets separados por linha em branco entre si. NÃO agrupar em parágrafo.]
 
-- O teste contém um total de [active_questions_count] perguntas.
-- [Se unverifiable_questions não for vazio E reason="no_config_match" E NÃO há inferência para essas perguntas:] Há [N] pergunta(s) que não foram detectadas em nenhum gabarito.
-- [Se inferred_questions_detail não vazio:] Há [N] pergunta(s) sem gabarito no LW, verificadas por inferência automática a partir do gabarito ID / Docente (confirmação humana recomendada).
-- O gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
-- O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count] perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio].
-- Foram validadas [answer_key_matched_count] perguntas cruzando com o gabarito ID / Docente.
-- [Se existem linhas com flag="answer_accepted_but_zero" ou "answer_correct_per_doc_but_zero" em flagged_rows:] [N] aluno(s) têm respostas correctas com 0 pontos atribuídos.
-- [Se `not_accepted_but_full_flags` não vazio:] [N] resposta(s) não reconhecidas pelo gabarito mas com pontuação completa atribuída.
+- O teste contém um total de [active_questions_count] perguntas, detetadas nas submissões dos alunos.
+
+- O gabarito LearnWorlds tem resposta correcta definida para [exam_config_exportable_count] perguntas. O gabarito ID / Docente [se answer_key_ran: tem resposta correcta definida para [answer_key_matched_count + len(inferred_questions_detail)] perguntas — [answer_key_confidence_breakdown.high] com correspondência exacta[, se inferred: [N] inferidas automaticamente (preenchimento de lacunas / correspondência)][, se answer_key_doc_not_found: [N] não encontradas]][senão: não foi executado].
+
+- Foram validadas [verifiable_count + inferred_rows_count] respostas cruzando com o gabarito ID / Docente[se inferred_rows_count > 0: , das quais [inferred_rows_count] com base em [len(inferred_questions_detail)] pergunta(s) inferida(s) automaticamente — a confirmação humana dessas inferências é necessária antes de qualquer decisão sobre notas].
+
+[Uma linha em branco antes de cada ocorrência. Só incluir os bullets abaixo se existirem dados:]
+
+- [N] aluno(s) com respostas correctas mas 0 pontos atribuídos.
+
+- [N] resposta(s) não reconhecidas pelo gabarito mas com pontuação completa atribuída.
+
+- [N] aluno(s) com resposta correcta rejeitada por conter texto adicional.
+
+[Se unverifiable_questions não vazio:] - [N] pergunta(s) sem resposta correcta definida em qualquer gabarito.
 
 NÃO incluir sub-listas de perguntas nesta secção — o detalhe fica nas secções abaixo.
 
@@ -121,88 +124,96 @@ NÃO incluir sub-listas de perguntas nesta secção — o detalhe fica nas secç
 
 ## Auditoria
 
-### Extração de submissões (API)
-[1-2 linhas: estado + alunos + total de respostas]
+### Extração de submissões
+[1-2 linhas: estado + alunos + total de linhas de resposta]
 
-### Importação do gabarito LW (XLSX)
+### Importação do gabarito LearnWorlds
 [1-2 linhas: quantas perguntas com gabarito verificável; quantas sem gabarito no sistema LW.]
 
-### Gabarito ID / Docente
-[Se não correu: "Não executado nesta corrida."
-Se correu:
-- Cobertura: N perguntas esperadas, N com correspondência exacta, N não encontradas.
-- Se houver itens em answer_key_doc_not_found: listar cada um como "Q[número]: [100 chars]"
-- Se answer_key_matched_count < expected_answer_key_count: uma linha de aviso em linguagem natural
-  indicando quantas perguntas estão em falta face ao total do teste (active_questions_count = 45),
-  sem usar maiúsculas de destaque nem palavras em caps.]
+### Gabarito ID / Docente (extracção automática)
+[Se não correu: "Não executado nesta corrida."]
+[Se correu — 1 linha de cobertura seguida de sub-bullets:]
+Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_questions_detail)] perguntas de preenchimento de lacunas / correspondência.
+- [answer_key_matched_count] perguntas com correspondência exacta (confiança exacta).
+[Se inferred_questions_detail não vazio:] - [N] perguntas inferidas automaticamente[: listar confiança por nível se não for tudo "high"]; usadas na reconciliação mas requerem confirmação humana.
+[Se answer_key_doc_not_found não vazio:] - [N] perguntas não encontradas no gabarito ID / Docente — sem validação cruzada para estas perguntas:
+  [listar cada uma como "- Q[número]: [80 chars do enunciado]"]
 
 ### Reconciliação de respostas
-[2-3 linhas:
-- Verificáveis: N (perguntas com gabarito LW × alunos, tipos compatíveis).
-- Não verificáveis: N — sem resposta em qualquer gabarito.
-- Flags: tipo e contagem.]
+- Verificadas por gabarito LearnWorlds (directo): [verifiable_count] ([exam_config_exportable_count] perguntas × [n_students] alunos, tipos compatíveis).
+[Se inferred_rows_count > 0:] - Verificadas por gabarito inferido: [inferred_rows_count] ([len(inferred_questions_detail)] pergunta(s) × [n_students] alunos, confiança alta).
+[Se inferred_low_conf_rows_count > 0:] - Aguardam confirmação (inferência com confiança insuficiente): [inferred_low_conf_rows_count].
+- Sem gabarito disponível: [unverifiable_count].
+[Se existem ocorrências — listar cada uma em linha separada, precedida de "Ocorrências detectadas:" se houver mais de 1:]
+[Se flagged_rows com answer_accepted_but_zero ou answer_correct_per_doc_but_zero:] - [N] resposta(s) correctas com 0 pontos.
+[Se not_accepted_but_full_flags:] - [N] resposta(s) não reconhecidas pelo gabarito mas com pontuação completa.
+[Se over_answered_flags:] - [N] resposta(s) correctas rejeitadas por texto adicional.
+[Se answer_key_real_discrepancies:] - [N] divergência(s) entre gabarito LearnWorlds e gabarito ID / Docente — possível parametrização errada.
 
 ---
 
 ## ⚠️ Problemas a corrigir
 
-[H3 por cada tipo de problema, em linguagem natural sem jargão. Ordem de gravidade decrescente:
+[OBRIGATÓRIO: verifica individualmente cada uma das 5 condições abaixo. "Nenhum problema
+identificado." só pode aparecer se AS 5 listas estiverem TODAS vazias. Cada condição é
+independente — não inferir a partir de outras. Usar `problems_checklist` no contexto como guia.]
 
-1. Se `doc_override_flags` não vazio → secção "Erro de parametrização — resposta correcta
-   rejeitada pelo LearnWorlds": explicar que o LearnWorlds tinha a opção errada configurada,
-   o aluno respondeu conforme a intenção do docente mas levou 0 pontos. Listar pergunta
-   (número + início do enunciado) e alunos afectados (nome + resposta + pontos). Máxima urgência.
+1. Se `answer_key_real_discrepancies` não vazio → "Divergência detectada entre gabaritos —
+   possível parametrização errada no LearnWorlds": explicar que o gabarito ID / Docente indica
+   uma resposta diferente da que está configurada no LearnWorlds. Isto pode significar que o LW
+   tem a opção errada configurada, penalizando respostas correctas. Listar pergunta (Q[número] +
+   enunciado) com resposta LW vs resposta do docente. Urgência 🔴.
 
-2. Se `over_answered_flags` não vazio → secção "Resposta correcta com texto a mais — rejeitada
-   pelo LearnWorlds": explicar em linguagem natural que estes alunos escreveram a resposta certa
-   mas acrescentaram texto adicional (ex: deram o nome em inglês e português na mesma resposta),
-   e que o sistema de avaliação exige uma correspondência exacta. Agrupar por pergunta (usar o
-   início do enunciado). Para cada aluno: nome, resposta submetida, pontos obtidos vs máximo.
-   Urgência 🔴.
+2. Se `doc_override_flags` não vazio → "Erro de parametrização confirmado — resposta correcta
+   rejeitada pelo LearnWorlds": o aluno respondeu conforme a intenção do docente mas levou 0
+   pontos. Listar pergunta e alunos (nome + resposta + pontos). Máxima urgência 🔴.
 
-3. Se `flagged_rows` contém flag="answer_accepted_but_zero" → secção "Resposta certa mas
-   pontuação zero": listar pergunta e alunos afectados. Só incluir alunos cujo flag seja
-   exactamente "answer_accepted_but_zero" — NÃO incluir outros flags.
+3. Se `over_answered_flags` não vazio → "Resposta correcta com texto a mais — rejeitada pelo
+   LearnWorlds": agrupar por pergunta; para cada aluno: nome, resposta submetida, pontos. 🔴.
 
-4. Se `not_accepted_but_full_flags` não vazio → secção "Resposta não reconhecida pelo gabarito
-   mas com pontuação completa": explicar que o gabarito não reconhece a resposta como correcta
-   mas o LW atribuiu pontuação completa. Listar pergunta e alunos (nome + resposta + pontos).
-   Nota: estes alunos TÊM pontos — não é um problema de pontuação zero. Urgência 🟡 — pode
-   indicar resposta alternativa válida ou gabarito incompleto.
+4. Se `flagged_rows` contém flag="answer_accepted_but_zero" → "Resposta certa mas pontuação
+   zero": listar pergunta e alunos. Só flag exactamente "answer_accepted_but_zero". 🔴.
 
-5. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
-   resposta do gabarito ID / Docente.
+5. Se `not_accepted_but_full_flags` não vazio → escrever (substituindo os placeholders pelos dados reais):
 
-Se não houver nenhum: "Nenhum problema identificado."]
+   Resposta não reconhecida pelo gabarito mas com pontuação completa:
+   - **Q[question_number]**: "[question_text]"
+     - [student_name]: "[submitted_answer]" ([points] pontos)
+   [repetir para cada item em not_accepted_but_full_flags]
+
+   Nota: estes alunos TÊM pontos — não é problema de pontuação zero. Urgência 🟡.
+
+---
+
+## 🔍 Perguntas inferidas — confirmação necessária
+
+[Se `inferred_questions_detail` vazio: omitir esta secção inteira.]
+[Se não vazio:]
+Estas perguntas não têm gabarito no LearnWorlds. A resposta correcta foi inferida
+automaticamente a partir do gabarito ID / Docente e usada na reconciliação. Requerem
+confirmação humana antes de qualquer decisão sobre notas.
+
+[Para cada entrada em `inferred_questions_detail`:]
+- **(sem número atribuído)**: "[question_text primeiros 150 chars]"
+  - **Resposta inferida:** "[doc_correct_answer]"
+  - **Confiança:** [confidence]
+  - **Acção:** Confirmar que a resposta inferida corresponde à intenção do docente. Se incorrecta, corrigir manualmente na tabela de extracção.
 
 ---
 
 ## ℹ️ Perguntas sem gabarito disponível
 
-ATENÇÃO: existem 3 situações DISTINTAS — não misturar. NÃO escrever os nomes dos campos
-no output — usar apenas os títulos abaixo:
+[Se não há `unverifiable_questions` E não há `answer_key_doc_not_found`: omitir esta secção.]
 
+[Se `unverifiable_questions` não vazio:]
 **Sem resposta em nenhum gabarito:**
-[Perguntas de `unverifiable_questions` onde reason="no_config_match" — sem gabarito em NENHUMA
-fonte. Uma linha por pergunta:]
-- **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar
-  automaticamente a resposta correcta desta pergunta. Recomenda-se verificação manual.
+[Uma linha por pergunta — sem gabarito em QUALQUER fonte:]
+- **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar automaticamente a resposta correcta. Recomenda-se verificação manual.
 
-**Resposta inferida automaticamente (requer confirmação humana):**
-[Se `inferred_ran=true` e `inferred_questions_detail` não vazio: listar estas perguntas.
-São perguntas de preenchimento de lacunas ou correspondência cujo gabarito NÃO está no LW
-mas foi inferido pelo LLM a partir do gabarito ID / Docente. Uma linha por pergunta:]
-- **(sem número atribuído)**: "[primeiros 80 chars]" — Resposta inferida: "[doc_correct_answer]"
-  (confiança: [confidence]). Esta inferência foi usada na reconciliação mas requer confirmação
-  humana — não é um gabarito oficial.
-[Se `inferred_questions_detail` vazio ou `inferred_ran=false`: omitir este bloco.]
-
-**Presentes no gabarito LW mas não encontradas no gabarito ID / Docente:**
-[Perguntas de `answer_key_doc_not_found` — TÊM resposta no gabarito LW. Uma linha por pergunta:]
-- **Q[número]**: "[primeiros 80 chars]" — Presente no gabarito LW (resposta:
-  "[lw_correct_answer curta]"), mas não encontrada no gabarito ID / Docente para validação.
-
-Sem jargão técnico em nenhuma das entradas.]
+[Se `answer_key_doc_not_found` não vazio:]
+**Presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente:**
+[Uma linha por pergunta:]
+- **Q[número]**: "[primeiros 80 chars]" — Presente no gabarito LearnWorlds (resposta: "[lw_correct_answer curta]"), mas não encontrada no gabarito ID / Docente para validação cruzada.
 
 ---
 
@@ -210,7 +221,15 @@ Sem jargão técnico em nenhuma das entradas.]
 
 | Prioridade | Acção |
 |------------|-------|
-[mínimo 1 linha por problema ⚠️; 1 linha por limitação accionável]
+[Gerar linhas APENAS para as situações que existem nos dados. Seguir esta lógica de prioridade:]
+[🔴 Se answer_key_real_discrepancies:] | 🔴 | Verificar divergências detectadas entre gabaritos e corrigir a parametrização no LearnWorlds se confirmado o erro |
+[🔴 Se doc_override_flags:] | 🔴 | Corrigir parametrização no LearnWorlds para as perguntas onde o gabarito ID / Docente confirma erro |
+[🔴 Se over_answered_flags:] | 🔴 | Corrigir parametrização no LearnWorlds para aceitar as variantes de resposta correcta rejeitadas por texto adicional |
+[🔴 Se flagged_rows com zero-score:] | 🔴 | Investigar e corrigir pontuação zero para as respostas correctas identificadas |
+[🟡 Se not_accepted_but_full_flags:] | 🟡 | Verificar se as respostas com pontuação completa mas não reconhecidas pelo gabarito são válidas; se sim, actualizar o gabarito |
+[🔵 Se inferred_questions_detail:] | 🔵 | Confirmar manualmente as [N] perguntas inferidas: comparar a resposta inferida com o gabarito ID / Docente original |
+[🔵 Se inferred_questions_detail e confirmadas:] | 🔵 | Uma vez confirmadas as inferências, cruzar os resultados da reconciliação com a tabela de revisão para validar notas |
+[🔵 Se answer_key_doc_not_found:] | 🔵 | Verificar as [N] perguntas presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente |
 
 ---
 
@@ -501,11 +520,13 @@ def _build_context(run_dir: Path) -> dict:
     except IndexError:
         label, program, timestamp = "—", "—", "—"
 
-    # Human-readable label — prefer LABEL_DISPLAY from assessment.cfg if present
+    # Human-readable label — prefer LABEL_DISPLAY from run_meta.cfg (written at extraction
+    # time) so the label is always correct even when assessment.cfg has since changed.
+    # Fall back to path-slug derivation for older runs without run_meta.cfg.
     _cfg_display = ""
-    cfg_path = PROJECT_ROOT / "assessment.cfg"
-    if cfg_path.exists():
-        for _line in cfg_path.read_text(encoding="utf-8").splitlines():
+    run_meta_path = run_dir / "run_meta.cfg"
+    if run_meta_path.exists():
+        for _line in run_meta_path.read_text(encoding="utf-8").splitlines():
             _line = _line.strip()
             if _line.startswith("LABEL_DISPLAY="):
                 _cfg_display = _line.partition("=")[2].strip().strip('"').strip("'")
@@ -513,19 +534,25 @@ def _build_context(run_dir: Path) -> dict:
     if _cfg_display:
         label_display = _cfg_display
     else:
-        # Fallback: derive from slug ("uc1-mercados-economia-financeira" → "UC1 Mercados Economia Financeira")
+        # Derive from path slug ("uc1-mercados-e-economia-financeira" → "UC1 Mercados e Economia Financeira")
         import re as _re
         _words = label.split("-")
         _display_words = []
         for w in _words:
             if _re.match(r"^uc\d+$", w, _re.IGNORECASE):
                 _display_words.append(w.upper())
+            elif len(w) <= 2 and w.lower() in ("e", "de", "da", "do", "a", "o", "em"):
+                _display_words.append(w.lower())
             else:
                 _display_words.append(w.capitalize())
         label_display = " ".join(_display_words)
 
     # Answer key summary stats
     ak_summary = summary.get("answer_key", {})
+
+    # Inferred rows counts
+    inferred_rows_count = sum(1 for r in report_rows if r.get("verifiable") == "inferred")
+    inferred_low_conf_rows_count = sum(1 for r in report_rows if r.get("verifiable") == "inferred_low_confidence")
 
     # Inferred questions: orphan questions resolved by LLM from Word doc
     inferred_summary = ak_summary.get("inferred", {})
@@ -553,6 +580,24 @@ def _build_context(run_dir: Path) -> dict:
                     "blockType": r.get("blockType", ""),
                 })
 
+    # Explicit checklist so the LLM never skips a problem type even when flagged_rows is empty
+    problems_checklist = {
+        "answer_key_real_discrepancies_count": len(ak_real_discrepancies),
+        "doc_override_flags_count": len(doc_override_flags),
+        "over_answered_flags_count": len(over_answered_flags),
+        "answer_accepted_but_zero_count": sum(
+            1 for r in flagged if r["flag"] == "answer_accepted_but_zero"
+        ),
+        "not_accepted_but_full_count": len(not_accepted_but_full_flags),
+        "has_any_problem": bool(
+            ak_real_discrepancies
+            or doc_override_flags
+            or over_answered_flags
+            or any(r["flag"] == "answer_accepted_but_zero" for r in flagged)
+            or not_accepted_but_full_flags
+        ),
+    }
+
     return {
         "assessment_type": "Teste de Avaliação",
         "program": program,
@@ -577,11 +622,15 @@ def _build_context(run_dir: Path) -> dict:
         "unverifiable_count": no_config,
         "unverifiable_explanation": unverifiable_explanation,
         "unverifiable_questions": review_queue,
-        # Flags
-        "flagged_rows": flagged,
+        # Flags — flagged_rows only carries zero-score anomalies (others have dedicated lists)
+        "flagged_rows": [
+            r for r in flagged
+            if r["flag"] in ("answer_accepted_but_zero", "answer_correct_per_doc_but_zero")
+        ],
         "doc_override_flags": doc_override_flags,
         "over_answered_flags": over_answered_flags,
         "not_accepted_but_full_flags": not_accepted_but_full_flags,
+        "problems_checklist": problems_checklist,
         "flag_counts": summary.get("flag_counts", {}),
         # Consistency (same answer, different points across students)
         "inconsistent_scoring_questions": summary.get("inconsistent_scoring_questions", 0),
@@ -591,17 +640,16 @@ def _build_context(run_dir: Path) -> dict:
         "answer_key_confidence_breakdown": dict(ak_conf),
         "answer_key_matched_count": ak_matched_count,
         "answer_key_real_discrepancies": ak_real_discrepancies,
-        "answer_key_doc_not_found": ak_doc_not_found,
+        "answer_key_doc_not_found": [
+            {**r, "question_text": r["question_text"][:80]} for r in ak_doc_not_found
+        ],
         # Inferred answers (fillInTheBlank / match — not in LW export)
         "inferred_ran": bool(inferred_rows),
         "inferred_summary": inferred_summary,
         "inferred_questions_detail": inferred_questions_detail,
         "inferred_reconciled_questions": inferred_reconciled_questions,
-        # Full question index (consistent numbering for LLM)
-        "questions_index": {
-            qn: {k: v for k, v in q.items() if k != "question_number"}
-            for qn, q in questions_index.items()
-        },
+        "inferred_rows_count": inferred_rows_count,
+        "inferred_low_conf_rows_count": inferred_low_conf_rows_count,
     }
 
 

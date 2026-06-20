@@ -115,6 +115,18 @@ def run(
     out_dir = resolve_step_dir(run_dir, "submissions", run_ts, config, label or "", assessment_id or "")
     raw_dir = out_dir / "raw"
 
+    # Persist run metadata so downstream tools (e.g. interpret_run.py) can read the
+    # correct label/program without depending on the global assessment.cfg (which changes).
+    run_meta_path = out_dir.parent / "run_meta.cfg"
+    if not run_meta_path.exists():
+        run_meta_path.parent.mkdir(parents=True, exist_ok=True)
+        run_meta_path.write_text(
+            f"PROGRAM={config.get('program', '')}\n"
+            f"LABEL={label or config.get('label', '')}\n"
+            f"LABEL_DISPLAY={config.get('label_display', '')}\n",
+            encoding="utf-8",
+        )
+
     # Raw-first: always persist the raw payload before transforming.
     raw_file = save_raw_response(raw_to_save, raw_dir)
     print(f"Saved raw response: {raw_file}")
