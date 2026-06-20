@@ -45,27 +45,30 @@ SYSTEM_PROMPT = """\
 Receberás dados estruturados de uma corrida de reconciliação de um Teste de Avaliação
 LearnWorlds e deves produzir um relatório de interpretação em Português de Portugal.
 
-REGRAS:
-- Escreve sempre em Português de Portugal (não Brasil).
-- Sê concreto e sintético: menciona nomes de alunos, números de pergunta e enunciados quando
-  disponíveis; evita generalidades.
+REGRAS GERAIS:
+- Português de Portugal (não Brasil).
+- Sê concreto e sintético: menciona nomes, números de pergunta e enunciados; evita generalidades.
 - Não inventes dados. Só incluis afirmações suportadas pelos dados.
-- `no_config_match` / `unverifiable_questions`: tipos fillInTheBlankBlock e match — o LW NÃO
-  exporta o gabarito destes tipos. É uma limitação da plataforma, NÃO um erro de configuração.
-- `answer_accepted_but_zero`: a resposta do aluno é CORRECTA segundo o gabarito mas foram
-  atribuídos 0 pontos — PROBLEMA REAL que requer correcção imediata.
-- `answer_key_real_discrepancies`: ambas as fontes (LW e Word docente) têm resposta mas diferem
-  — PROBLEMA REAL.
-- `answer_key_doc_not_found`: o LLM não encontrou a questão no documento Word (p.ex. estava
-  numa tabela não reconhecida) — o gabarito LW está provavelmente correcto; apenas não existe
-  cross-check docente para essa pergunta.
-- Para a tabela de acções: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
+- Usa sempre números arábicos (42, não "quarenta e dois"). Nunca mistures algarismos com
+  palavras por extenso no mesmo contexto.
+- O programa deve aparecer sempre em maiúsculas (ex: pggf2 → PGGF2, mba3 → MBA3).
+- "correspondência exacta" = confidence high no gabarito ID/Docente. Não usar "alta".
+
+REGRAS SOBRE OS DADOS:
+- `no_config_match` / `unverifiable_questions`: o LW não exporta o gabarito dos tipos
+  fillInTheBlankBlock e match — limitação da plataforma, não erro de configuração.
+- O gabarito ID/Docente (Word) deve idealmente cobrir `active_questions_count` perguntas.
+  Se `answer_key_matched_count` < `expected_answer_key_count`, é uma lacuna a assinalar.
+- `answer_accepted_but_zero`: resposta correcta mas 0 pontos — PROBLEMA REAL, correcção urgente.
+- `answer_key_real_discrepancies`: ambas as fontes têm resposta mas diferem — PROBLEMA REAL.
+- `answer_key_doc_not_found`: pergunta não encontrada no Word pelo LLM — gabarito LW correcto,
+  ausência de cross-check docente (possível tabela ou formato não reconhecido).
+- Tabela de acções: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
-- Usa `active_questions_count` para referir o número total de perguntas do teste.
 
 FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
-# Interpretação da auditoria — [label legível] ([programa])
+# Interpretação da auditoria — [label legível] ([PROGRAMA EM MAIÚSCULAS])
 
 **Tipo:** Teste de Avaliação
 **Run:** [run_timestamp]
@@ -73,62 +76,73 @@ FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
 ---
 
-## Resumo executivo
+## Resumo
 
-[2-3 parágrafos: o que é este teste, o que a auditoria cobriu, nível de confiança geral]
+**Abertura:** [1 frase — "Este relatório refere-se à auditoria de um Teste de Avaliação da
+unidade curricular [label legível] no âmbito do programa [PROGRAMA]."]
+
+**Dados:** [1-2 frases com números arábicos: total de perguntas (usar active_questions_count),
+quantas verificadas via gabarito LW (usar exam_config_exportable_count), quantas cruzadas com
+o gabarito ID/Docente (usar answer_key_matched_count). Se answer_key_matched_count <
+active_questions_count, assinalar a diferença com os números concretos.]
+
+**Problemas / Incongruências:** [2-4 frases: distinguir claramente entre (a) limitação LW —
+N perguntas sem gabarito no export, (b) limitação docente — N perguntas não encontradas no
+Word, (c) flags de pontuação — N casos. Se não há problemas de um tipo, omitir essa categoria.]
+
+**Conclusão:**
+- [N] pergunta(s) com correspondência exacta entre gabarito LW e ID/Docente
+- [N] pergunta(s) não encontrada(s) no documento Word: Q[número]: "[primeiros 80 chars]"
+  (se houver; senão omitir este bullet)
+- [N] pergunta(s) não verificáveis por limitação do LW (senão omitir)
 
 ---
 
-## Pipeline de auditoria
+## Auditoria
 
 ### Extração de submissões (API)
-[1-2 linhas: estado + contagens de alunos e linhas de resposta]
+[1-2 linhas: estado + alunos + linhas de resposta]
 
 ### Importação do gabarito LW (XLSX)
-[1-2 linhas: referir quantas perguntas foram exportadas com gabarito verificável pelo sistema,
-e quantas perguntas do teste ficaram fora do export por limitação do LW (os tipos
-fillInTheBlankBlock/match). NÃO listar os blockTypes.]
+[1-2 linhas: quantas perguntas exportadas com gabarito verificável; quantas ficaram fora
+do export (fillInTheBlankBlock/match) — sem listar blockTypes internos.]
 
-### Gabarito docente (Word → LLM)
+### Gabarito ID / Docente
 [Se não correu: "Não executado nesta corrida."
 Se correu:
-- Cobertura esperada vs real: `expected_answer_key_count` perguntas esperadas,
-  quantas com confiança alta/média/baixa, quantas unmatched.
-- Se houver questões unmatched (`answer_key_doc_not_found`): listá-las EXPLICITAMENTE com
-  número e enunciado (primeiros 100 chars).
-- Se `answer_key_matched_count` < `expected_answer_key_count`: ADVERTÊNCIA destacada.]
+- Cobertura: N perguntas esperadas (expected_answer_key_count), N com correspondência exacta
+  (answer_key_matched_count), N não encontradas (answer_key_doc_not_found).
+- Não encontradas EXPLICITAMENTE: "Q[número]: [primeiros 100 chars do enunciado]" por cada uma.
+- ⚠️ ADVERTÊNCIA se answer_key_matched_count < expected_answer_key_count.]
 
 ### Reconciliação de respostas
-[2-3 linhas sintéticas:
-- Verificáveis: N (= perguntas com gabarito LW × alunos); confirmar que correspondem aos
-  tipos com gabarito (TMC, TTF, etc.).
-- Não verificáveis: N (= perguntas sem gabarito no export × alunos) — indicar porquê.
-- Flags detectados: listar tipo e contagem.]
-
-### Coerência entre alunos
-[1 linha apenas: se 0 inconsistências, "Nenhuma inconsistência de pontuação detectada entre
-alunos para a mesma resposta." Se houver, listar brevemente.]
+[2-3 linhas:
+- Verificáveis: N (perguntas com gabarito LW × alunos, tipos compatíveis).
+- Não verificáveis: N (perguntas sem gabarito no export × alunos) — porquê.
+- Flags: tipo e contagem.]
 
 ---
 
 ## ⚠️ Problemas a corrigir
 
-[Para cada problema real: H3 com título claro.
-- Flags `answer_accepted_but_zero`: usar título "Resposta certa mas pontuação zero".
-  Listar alunos com nome, resposta exacta e pontos atribuídos.
-- `answer_key_real_discrepancies`: listar pergunta (número + enunciado), resposta LW, resposta
-  docente.
-Se não houver problemas: "Nenhum problema identificado."]
+[H3 por cada problema.
+- `answer_accepted_but_zero` → título "Resposta certa mas pontuação zero": listar pergunta,
+  alunos (nome + resposta + pontos).
+- `answer_key_real_discrepancies` → listar pergunta (número + enunciado), resposta LW vs docente.
+Se não houver: "Nenhum problema identificado."]
 
 ---
 
 ## ℹ️ Limitações de auditabilidade
 
-[Listar cada pergunta não auditável com:
-- Número da pergunta (se disponível) e primeiros 80 chars do enunciado
-- Tipo (blockType)
-- Motivo (limitação de export LW / não encontrada no Word)
-Agrupar por documento Word de origem quando aplicável.]
+[Por cada pergunta não auditável, 1 entrada com formato:
+- **[Número se disponível, senão "(sem número no LW)"]**: "[primeiros 80 chars do enunciado]"
+  — Tipo: [blockType] — Recomenda-se auditoria manual desta pergunta.]
+
+### Sugestões de melhoria
+[2-4 bullets concretos para melhorar a extracção futura do gabarito ID/Docente ou a
+auditabilidade geral. Ex: formatar respostas no Word com convenção clara, estruturar tabelas
+de match de forma legível pelo LLM, etc.]
 
 ---
 
@@ -136,7 +150,7 @@ Agrupar por documento Word de origem quando aplicável.]
 
 | Prioridade | Acção | Responsável | Prazo sugerido |
 |------------|-------|-------------|---------------|
-[mínimo uma linha por problema ⚠️; uma linha por limitação accionável]
+[mínimo 1 linha por problema ⚠️; 1 linha por limitação accionável]
 
 ---
 
@@ -278,9 +292,10 @@ def _build_context(run_dir: Path) -> dict:
         if r.get("flag", "").strip()
     ]
 
-    # Manual review queue — unverifiable questions
+    # Manual review queue — unverifiable questions (no question_number in LW export)
     review_queue = [
         {
+            "question_number": r.get("question_number", "") or "(sem número no LW)",
             "blockType": r.get("blockType", ""),
             "description": r.get("description", "")[:200],
             "reason": r.get("reason", ""),
@@ -383,6 +398,7 @@ def _build_context(run_dir: Path) -> dict:
     return {
         "assessment_type": "Teste de Avaliação",
         "program": program,
+        "program_display": program.upper(),
         "label": label,
         "run_timestamp": summary.get("run_timestamp", timestamp),
         # Counts
