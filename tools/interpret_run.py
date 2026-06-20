@@ -47,22 +47,25 @@ LearnWorlds e deves produzir um relatório de interpretação em Português de P
 
 REGRAS GERAIS:
 - Português de Portugal (não Brasil).
+- Linguagem acessível para vários stakeholders (docentes, coordenadores, pessoal administrativo).
+  Sem jargão técnico: nunca usar "export", "flag", "blockType", "fillInTheBlankBlock", "match",
+  "API", "CSV", "JSON", "LLM", "config", "unmatched". Traduzir sempre para linguagem natural.
 - Sê concreto e sintético: menciona nomes, números de pergunta e enunciados; evita generalidades.
 - Não inventes dados. Só incluis afirmações suportadas pelos dados.
 - Usa sempre números arábicos (42, não "quarenta e dois"). Nunca mistures algarismos com
   palavras por extenso no mesmo contexto.
 - O programa deve aparecer sempre em maiúsculas (ex: pggf2 → PGGF2, mba3 → MBA3).
 - "correspondência exacta" = confidence high no gabarito ID/Docente. Não usar "alta".
+- Nunca escrever "documento Word" — usar sempre "Gabarito ID / Docente".
 
 REGRAS SOBRE OS DADOS:
-- `no_config_match` / `unverifiable_questions`: o LW não exporta o gabarito dos tipos
-  fillInTheBlankBlock e match — limitação da plataforma, não erro de configuração.
-- O gabarito ID/Docente (Word) deve idealmente cobrir `active_questions_count` perguntas.
-  Se `answer_key_matched_count` < `expected_answer_key_count`, é uma lacuna a assinalar.
+- As perguntas em `unverifiable_questions` (sem gabarito no LW) também NÃO foram processadas
+  pelo Gabarito ID / Docente — portanto NÃO têm resposta correcta em NENHUMA fonte disponível.
+  Dizer isso claramente: "X perguntas sem resposta correcta definida em qualquer gabarito".
 - `answer_accepted_but_zero`: resposta correcta mas 0 pontos — PROBLEMA REAL, correcção urgente.
-- `answer_key_real_discrepancies`: ambas as fontes têm resposta mas diferem — PROBLEMA REAL.
-- `answer_key_doc_not_found`: pergunta não encontrada no Word pelo LLM — gabarito LW correcto,
-  ausência de cross-check docente (possível tabela ou formato não reconhecido).
+- `answer_key_real_discrepancies`: Gabarito LW e Gabarito ID / Docente divergem — PROBLEMA REAL.
+- `answer_key_doc_not_found`: pergunta não encontrada no Gabarito ID / Docente — o Gabarito LW
+  está correcto, mas não há validação cruzada do docente para esta pergunta.
 - Tabela de acções: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
 
@@ -81,68 +84,95 @@ FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 **Abertura:** [1 frase — "Este relatório refere-se à auditoria de um Teste de Avaliação da
 unidade curricular [label legível] no âmbito do programa [PROGRAMA]."]
 
-**Dados:** [1-2 frases com números arábicos: total de perguntas (usar active_questions_count),
-quantas verificadas via gabarito LW (usar exam_config_exportable_count), quantas cruzadas com
-o gabarito ID/Docente (usar answer_key_matched_count). Se answer_key_matched_count <
-active_questions_count, assinalar a diferença com os números concretos.]
+**Dados:** [1-2 frases em linguagem natural, sem jargão: total de perguntas do teste,
+quantas têm resposta correcta definida no Gabarito LW, quantas foram validadas cruzando com
+o Gabarito ID / Docente. Usar os valores de active_questions_count, exam_config_exportable_count
+e answer_key_matched_count para construir as frases — mas não mencionar os nomes destes campos.]
 
-**Problemas / Incongruências:** [2-4 frases: distinguir claramente entre (a) limitação LW —
-N perguntas sem gabarito no export, (b) limitação docente — N perguntas não encontradas no
-Word, (c) flags de pontuação — N casos. Se não há problemas de um tipo, omitir essa categoria.]
+**Pontos de atenção:**
+
+*Gabarito LW:*
+[Listar o que diz respeito ao Gabarito LW: perguntas sem resposta definida no Gabarito LW
+(unverifiable_questions — dizer que não têm resposta em NENHUM gabarito), flags de pontuação
+(answer_accepted_but_zero — dizer "resposta correcta com 0 pontos"). Se não há, omitir
+esta subsecção.]
+
+*Gabarito ID / Docente:*
+[Listar o que diz respeito ao Gabarito ID / Docente: perguntas não encontradas no Gabarito
+ID / Docente (answer_key_doc_not_found — identificar por número e primeiros 80 chars do
+enunciado), discrepâncias reais entre Gabarito LW e Gabarito ID / Docente. Se não há, omitir.]
 
 **Conclusão:**
-- [N] pergunta(s) com correspondência exacta entre gabarito LW e ID/Docente
-- [N] pergunta(s) não encontrada(s) no documento Word: Q[número]: "[primeiros 80 chars]"
-  (se houver; senão omitir este bullet)
-- [N] pergunta(s) não verificáveis por limitação do LW (senão omitir)
+- [N] pergunta(s) com correspondência exacta entre Gabarito LW e Gabarito ID / Docente
+- [N] pergunta(s) sem resposta definida em nenhum gabarito (indicar enunciados)
+  (senão omitir)
+- [N] pergunta(s) não encontrada(s) no Gabarito ID / Docente: Q[número]: "[80 chars]"
+  (senão omitir)
 
 ---
 
 ## Auditoria
 
-### Extração de submissões (API)
-[1-2 linhas: estado + alunos + linhas de resposta]
+### Recolha de respostas
+[1-2 linhas: estado + alunos + total de respostas recolhidas. Sem termos técnicos.]
 
-### Importação do gabarito LW (XLSX)
-[1-2 linhas: quantas perguntas exportadas com gabarito verificável; quantas ficaram fora
-do export (fillInTheBlankBlock/match) — sem listar blockTypes internos.]
+### Importação do Gabarito LW
+[1-2 linhas em linguagem natural: de quantas perguntas o Gabarito LW tem resposta correcta
+definida, e quantas perguntas do teste ficaram sem resposta definida no Gabarito LW
+(unverifiable_questions) — explicar em linguagem simples, sem termos técnicos.]
 
 ### Gabarito ID / Docente
 [Se não correu: "Não executado nesta corrida."
-Se correu:
-- Cobertura: N perguntas esperadas (expected_answer_key_count), N com correspondência exacta
-  (answer_key_matched_count), N não encontradas (answer_key_doc_not_found).
-- Não encontradas EXPLICITAMENTE: "Q[número]: [primeiros 100 chars do enunciado]" por cada uma.
-- ⚠️ ADVERTÊNCIA se answer_key_matched_count < expected_answer_key_count.]
+Se correu (em linguagem natural, sem jargão):
+- Cobertura: N perguntas analisadas, N com correspondência exacta com o Gabarito LW, N não
+  encontradas no Gabarito ID / Docente.
+- Não encontradas EXPLICITAMENTE, com número e início do enunciado por cada uma.
+- ⚠️ ADVERTÊNCIA se não foram encontradas todas as perguntas esperadas.]
 
-### Reconciliação de respostas
-[2-3 linhas:
-- Verificáveis: N (perguntas com gabarito LW × alunos, tipos compatíveis).
-- Não verificáveis: N (perguntas sem gabarito no export × alunos) — porquê.
-- Flags: tipo e contagem.]
+### Verificação das respostas dos participantes
+[2-3 linhas em linguagem natural:
+- N respostas verificadas automaticamente (perguntas com gabarito LW × alunos).
+- N respostas não verificáveis — perguntas sem resposta definida em qualquer gabarito.
+- Situações detectadas que requerem atenção (answer_accepted_but_zero — "resposta correcta
+  com 0 pontos atribuídos").]
 
 ---
 
 ## ⚠️ Problemas a corrigir
 
-[H3 por cada problema.
-- `answer_accepted_but_zero` → título "Resposta certa mas pontuação zero": listar pergunta,
-  alunos (nome + resposta + pontos).
-- `answer_key_real_discrepancies` → listar pergunta (número + enunciado), resposta LW vs docente.
+[H3 por cada problema, em linguagem natural sem jargão.
+- Respostas correctas com 0 pontos → título "Resposta certa mas pontuação zero": listar pergunta
+  (número + início do enunciado), alunos (nome + resposta enviada + pontos atribuídos).
+- Divergências entre Gabarito LW e Gabarito ID / Docente → listar pergunta, resposta LW vs
+  resposta do Gabarito ID / Docente.
 Se não houver: "Nenhum problema identificado."]
 
 ---
 
-## ℹ️ Limitações de auditabilidade
+## ℹ️ Perguntas sem gabarito disponível
 
-[Por cada pergunta não auditável, 1 entrada com formato:
-- **[Número se disponível, senão "(sem número no LW)"]**: "[primeiros 80 chars do enunciado]"
-  — Tipo: [blockType] — Recomenda-se auditoria manual desta pergunta.]
+ATENÇÃO: existem 2 situações DISTINTAS — não misturar:
+
+(A) Perguntas sem resposta correcta em NENHUM gabarito (unverifiable_questions):
+Estas perguntas não têm resposta correcta definida no Gabarito LW nem no Gabarito ID / Docente.
+Só é possível verificar manualmente. Formato:
+- **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar automaticamente
+  a resposta correcta desta pergunta. Recomenda-se verificação manual.
+
+(B) Perguntas presentes no Gabarito LW mas não encontradas no Gabarito ID / Docente
+(answer_key_doc_not_found):
+Estas perguntas TÊM resposta correcta no Gabarito LW — o problema é apenas a ausência de
+validação cruzada com o Gabarito ID / Docente. Formato:
+- **Q[número]**: "[primeiros 80 chars]" — Presente no Gabarito LW (resposta: "[lw_correct_answer
+  curta]"), mas não encontrada no Gabarito ID / Docente para validação cruzada.
+
+Sem jargão técnico em nenhuma das entradas.]
 
 ### Sugestões de melhoria
-[2-4 bullets concretos para melhorar a extracção futura do gabarito ID/Docente ou a
-auditabilidade geral. Ex: formatar respostas no Word com convenção clara, estruturar tabelas
-de match de forma legível pelo LLM, etc.]
+[2-4 bullets em linguagem acessível para docentes e coordenadores. PROIBIDO usar: "export",
+"blockType", "fillInTheBlankBlock", "match", "API", "CSV", "flag", "config", "LLM".
+Exemplos de linguagem correcta: "perguntas de preenchimento de espaço", "perguntas de
+correspondência", "plataforma LearnWorlds", "Gabarito ID / Docente".]
 
 ---
 
