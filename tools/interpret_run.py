@@ -71,7 +71,7 @@ REGRAS SOBRE OS DADOS:
 
 FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
-# Interpretação da auditoria — [label legível] ([PROGRAMA EM MAIÚSCULAS])
+# Interpretação da auditoria — [label_display] ([program_display])
 
 **Tipo:** Teste de Avaliação
 **Run:** [run_timestamp]
@@ -81,60 +81,45 @@ FORMATO DE OUTPUT (Markdown exacto — respeitar secções e ordem):
 
 ## Resumo
 
-**Abertura:** [1 frase — "Este relatório refere-se à auditoria de um Teste de Avaliação da
-unidade curricular [label legível] no âmbito do programa [PROGRAMA]."]
+[1 frase de abertura SEM label — ex: "Este relatório refere-se à auditoria de um Teste de
+Avaliação da unidade curricular [label_display] no âmbito do programa [program_display]."]
 
-**Dados:** [1-2 frases em linguagem natural, sem jargão: total de perguntas do teste,
-quantas têm resposta correcta definida no Gabarito LW, quantas foram validadas cruzando com
-o Gabarito ID / Docente. Usar os valores de active_questions_count, exam_config_exportable_count
-e answer_key_matched_count para construir as frases — mas não mencionar os nomes destes campos.]
+[Bullets imediatamente a seguir — SEM "Dados:", SEM "Pontos de atenção:", SEM "Conclusão:":]
 
-**Pontos de atenção:**
-
-*Gabarito LW:*
-[Listar o que diz respeito ao Gabarito LW: perguntas sem resposta definida no Gabarito LW
-(unverifiable_questions — dizer que não têm resposta em NENHUM gabarito), flags de pontuação
-(answer_accepted_but_zero — dizer "resposta correcta com 0 pontos"). Se não há, omitir
-esta subsecção.]
-
-*Gabarito ID / Docente:*
-[Listar o que diz respeito ao Gabarito ID / Docente: perguntas não encontradas no Gabarito
-ID / Docente (answer_key_doc_not_found — identificar por número e primeiros 80 chars do
-enunciado), discrepâncias reais entre Gabarito LW e Gabarito ID / Docente. Se não há, omitir.]
-
-**Conclusão:**
-- [N] pergunta(s) com correspondência exacta entre Gabarito LW e Gabarito ID / Docente
-- [N] pergunta(s) sem resposta definida em nenhum gabarito (indicar enunciados)
-  (senão omitir)
-- [N] pergunta(s) não encontrada(s) no Gabarito ID / Docente: Q[número]: "[80 chars]"
-  (senão omitir)
+- O teste contém um total de [active_questions_count] perguntas.
+- O Gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
+- O Gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count]
+  perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio]:
+    - Pergunta [Q número]: "[primeiros 80 chars do enunciado]"
+    [uma sub-linha por cada item de answer_key_doc_not_found]
+- Foram validadas [answer_key_matched_count] perguntas cruzando com o Gabarito ID / Docente.
+- [Se unverifiable_questions não for vazio:] Há [N] pergunta(s) que não foram detectadas em
+  nenhum gabarito:
+    - [Para cada item de unverifiable_questions: "(sem número atribuído): [primeiros 80 chars]"]
+- [Se flagged_rows não vazio:] [N] aluno(s) têm respostas correctas com 0 pontos atribuídos.
 
 ---
 
 ## Auditoria
 
-### Recolha de respostas
-[1-2 linhas: estado + alunos + total de respostas recolhidas. Sem termos técnicos.]
+### Extração de submissões (API)
+[1-2 linhas: estado + alunos + total de respostas]
 
-### Importação do Gabarito LW
-[1-2 linhas em linguagem natural: de quantas perguntas o Gabarito LW tem resposta correcta
-definida, e quantas perguntas do teste ficaram sem resposta definida no Gabarito LW
-(unverifiable_questions) — explicar em linguagem simples, sem termos técnicos.]
+### Importação do Gabarito LW (XLSX)
+[1-2 linhas: quantas perguntas com gabarito verificável; quantas sem gabarito no sistema LW.]
 
 ### Gabarito ID / Docente
 [Se não correu: "Não executado nesta corrida."
-Se correu (em linguagem natural, sem jargão):
-- Cobertura: N perguntas analisadas, N com correspondência exacta com o Gabarito LW, N não
-  encontradas no Gabarito ID / Docente.
-- Não encontradas EXPLICITAMENTE, com número e início do enunciado por cada uma.
-- ⚠️ ADVERTÊNCIA se não foram encontradas todas as perguntas esperadas.]
+Se correu:
+- Cobertura: N perguntas esperadas, N com correspondência exacta, N não encontradas.
+- Não encontradas EXPLICITAMENTE: Q[número]: "[100 chars]" para cada item de answer_key_doc_not_found.
+- ⚠️ ADVERTÊNCIA se answer_key_matched_count < expected_answer_key_count.]
 
-### Verificação das respostas dos participantes
-[2-3 linhas em linguagem natural:
-- N respostas verificadas automaticamente (perguntas com gabarito LW × alunos).
-- N respostas não verificáveis — perguntas sem resposta definida em qualquer gabarito.
-- Situações detectadas que requerem atenção (answer_accepted_but_zero — "resposta correcta
-  com 0 pontos atribuídos").]
+### Reconciliação de respostas
+[2-3 linhas:
+- Verificáveis: N (perguntas com gabarito LW × alunos, tipos compatíveis).
+- Não verificáveis: N — sem resposta em qualquer gabarito.
+- Flags: tipo e contagem.]
 
 ---
 
@@ -151,20 +136,18 @@ Se não houver: "Nenhum problema identificado."]
 
 ## ℹ️ Perguntas sem gabarito disponível
 
-ATENÇÃO: existem 2 situações DISTINTAS — não misturar:
+ATENÇÃO: existem 2 situações DISTINTAS — não misturar. NÃO escrever os nomes dos campos
+("unverifiable_questions", "answer_key_doc_not_found") no output — usar apenas os títulos:
 
-(A) Perguntas sem resposta correcta em NENHUM gabarito (unverifiable_questions):
-Estas perguntas não têm resposta correcta definida no Gabarito LW nem no Gabarito ID / Docente.
-Só é possível verificar manualmente. Formato:
-- **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar automaticamente
-  a resposta correcta desta pergunta. Recomenda-se verificação manual.
+**Sem resposta em nenhum gabarito:**
+[Perguntas de `unverifiable_questions` — sem gabarito em NENHUMA fonte. Uma linha por pergunta:]
+- **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar
+  automaticamente a resposta correcta desta pergunta. Recomenda-se verificação manual.
 
-(B) Perguntas presentes no Gabarito LW mas não encontradas no Gabarito ID / Docente
-(answer_key_doc_not_found):
-Estas perguntas TÊM resposta correcta no Gabarito LW — o problema é apenas a ausência de
-validação cruzada com o Gabarito ID / Docente. Formato:
-- **Q[número]**: "[primeiros 80 chars]" — Presente no Gabarito LW (resposta: "[lw_correct_answer
-  curta]"), mas não encontrada no Gabarito ID / Docente para validação cruzada.
+**Presentes no Gabarito LW mas não encontradas no Gabarito ID / Docente:**
+[Perguntas de `answer_key_doc_not_found` — TÊM resposta no Gabarito LW. Uma linha por pergunta:]
+- **Q[número]**: "[primeiros 80 chars]" — Presente no Gabarito LW (resposta:
+  "[lw_correct_answer curta]"), mas não encontrada no Gabarito ID / Docente para validação.
 
 Sem jargão técnico em nenhuma das entradas.]
 
@@ -422,6 +405,29 @@ def _build_context(run_dir: Path) -> dict:
     except IndexError:
         label, program, timestamp = "—", "—", "—"
 
+    # Human-readable label — prefer LABEL_DISPLAY from assessment.cfg if present
+    _cfg_display = ""
+    cfg_path = PROJECT_ROOT / "assessment.cfg"
+    if cfg_path.exists():
+        for _line in cfg_path.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line.startswith("LABEL_DISPLAY="):
+                _cfg_display = _line.partition("=")[2].strip().strip('"').strip("'")
+                break
+    if _cfg_display:
+        label_display = _cfg_display
+    else:
+        # Fallback: derive from slug ("uc1-mercados-economia-financeira" → "UC1 Mercados Economia Financeira")
+        import re as _re
+        _words = label.split("-")
+        _display_words = []
+        for w in _words:
+            if _re.match(r"^uc\d+$", w, _re.IGNORECASE):
+                _display_words.append(w.upper())
+            else:
+                _display_words.append(w.capitalize())
+        label_display = " ".join(_display_words)
+
     # Answer key summary stats
     ak_summary = summary.get("answer_key", {})
 
@@ -430,6 +436,7 @@ def _build_context(run_dir: Path) -> dict:
         "program": program,
         "program_display": program.upper(),
         "label": label,
+        "label_display": label_display,
         "run_timestamp": summary.get("run_timestamp", timestamp),
         # Counts
         "submission_rows": total_rows,
