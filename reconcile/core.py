@@ -267,48 +267,32 @@ def _check_fill_in_blank(student_answer: str, inferred_answer: str) -> tuple[boo
 
 
 def _check_match(student_answer: str, inferred_answer: str) -> bool:
-    """Check match question: parse pairs and compare dicts.
+    """Check match question: verify each gabarito A→B pair appears in sequence
+    in the student answer, using join_key for normalisation.
 
     Inferred format: "A → B; C → D" (pairs by "; ", within pair by first " → ")
-    Student format (LW API): "A / B, A / B" (pairs by ", ", within pair by " / ")
+    Student format (LW API): "A / B, C / D" (pairs by ", ", within pair by " / ")
 
-    Column B can contain commas (e.g. "Fixa hoje a taxa de câmbio, eliminando..."),
-    so we cannot split naively by ",". Instead we split by " / " and use rfind(", ")
-    to find where B ends and the next A begins.
+    Substring matching on join_key output is used instead of positional splitting
+    so that Column A values containing "/" (e.g. "Senior Developer / Gatekeeper")
+    do not cause incorrect splits.
     """
-    inferred_pairs: dict = {}
+    inferred_pairs: list[tuple[str, str]] = []
     for pair in inferred_answer.split(";"):
         pair = pair.strip()
         if "→" in pair:
             a, _, b = pair.partition("→")
-            inferred_pairs[join_key(a)] = join_key(b)
+            ak, bk = join_key(a), join_key(b)
+            if ak and bk:
+                inferred_pairs.append((ak, bk))
     if not inferred_pairs:
         return False
 
-    parts = student_answer.split(" / ")
-    if len(parts) < 2:
+    student_key = join_key(student_answer)
+    if not student_key:
         return False
 
-    student_pairs: dict = {}
-    current_a = parts[0].strip()
-    for i in range(1, len(parts)):
-        chunk = parts[i]
-        if i < len(parts) - 1:
-            # B runs until the last ", " which precedes the next Column A label
-            last_comma = chunk.rfind(", ")
-            if last_comma >= 0:
-                b_raw = chunk[:last_comma].strip()
-                current_a_next = chunk[last_comma + 2:].strip()
-            else:
-                b_raw = chunk.strip()
-                current_a_next = ""
-        else:
-            b_raw = chunk.strip()
-            current_a_next = ""
-        student_pairs[join_key(current_a)] = join_key(b_raw)
-        current_a = current_a_next
-
-    return student_pairs == inferred_pairs
+    return all(ak + bk in student_key for ak, bk in inferred_pairs)
 
 
 def check_inferred_answer(block_type: str, answer: str, points, max_points, inferred_entry: dict) -> dict:
