@@ -51,6 +51,65 @@ ANSWER_KEY_COLUMNS = [
 
 CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1, "unmatched": 0}
 
+INFERRED_COLUMNS = [
+    "blockType",
+    "question_text",
+    "doc_correct_answer",
+    "confidence",
+    "notes",
+    "source_doc",
+]
+
+INFERRED_SYSTEM_PROMPT = """\
+You are an answer key extraction assistant for questions that do NOT appear in the LMS configuration.
+You will receive:
+1. A JSON list of questions (fill-in-the-blank and matching types) found only in student submissions.
+2. The extracted text of a professor's Word document containing the answer key.
+
+These questions have NO predefined answer options in the LMS — you must extract the correct answer
+directly from the document text.
+
+Rules:
+- Do NOT invent answers. Only extract answers explicitly present in the document.
+- If you cannot find the question or no answer is marked, set confidence to "unmatched".
+- Return the answer exactly as it appears in the document (no reformatting).
+- Use the question text as the primary match signal (numbers may differ between LMS and document).
+
+For FILL-IN-THE-BLANK questions (question text contains [] for each blank):
+- Look for labels like "Variações aceites (espaço 1):", "Espaço 1:", "Resposta espaço 1:",
+  or similar numbering ("Espaço N:").
+- Multiple accepted variants for the same blank are separated by ";" or "," or newlines.
+- Return all blanks joined with " | " as separator; variants within each blank separated by "; ".
+  Example: "Custo Médio Ponderado de Capital; custo médio ponderado de capital | capital; Capital"
+- If the document gives only one answer per blank, return that single answer per blank.
+- The document text uses [BOLD], [STYLE:...], [COLOR:#...], [TABLE]/[/TABLE] markers.
+  "Variações aceites" labels are often bold or in a custom style.
+
+For MATCH questions (question text asks students to match Column A with Column B):
+- Look for colour-coded rows (same colour = same pair), explicit pair labels
+  ("Par 1 — Coluna A / Coluna B"), or a two-column table where each row is a pair.
+  Colour markers appear as [COLOR:#RRGGBB] in the text.
+- Return each pair as "Column A text → Column B text"; pairs separated by "; ".
+  Example: "Forward cambial → Fixa a taxa de câmbio; Swap de taxa de juro → Troca taxa variável"
+
+Confidence rubric:
+- "high": question clearly found, answer is unambiguously marked.
+- "medium": question found with minor uncertainty, or answer marking requires interpretation.
+- "low": question found but answer is ambiguous or unclear.
+- "unmatched": question not found in document, or found but no answer is present.
+
+Return a single JSON object with a "results" key:
+{"results": [
+  {
+    "question_index": 0,
+    "doc_correct_answer": "Custo Médio Ponderado de Capital; custo médio ponderado de capital | capital",
+    "confidence": "high",
+    "notes": "Found fill-in-blank with Variações aceites labels for 2 blanks."
+  },
+  ...
+]}
+"""
+
 SYSTEM_PROMPT = """\
 You are an answer key extraction assistant. You will receive:
 1. A JSON list of questions from a Learning Management System (LMS), each with its answer options.
@@ -356,6 +415,108 @@ def call_openai(client, model: str, questions: list[dict], doc_text: str) -> lis
 
 
 # ---------------------------------------------------------------------------
+# Inferred extraction (Phase 2: orphan questions not in exam config)
+# ---------------------------------------------------------------------------
+
+def _find_orphan_questions(sub_path: Path, exam_config_rows: list[dict]) -> list[dict]:
+    """Find unique fillInTheBlank/match questions in submissions not in exam config."""
+    config_keys = {_join_key(r.get("description", "")) for r in exam_config_rows}
+    orphan_types = {"fillintheblankblock", "match"}
+    seen: set[str] = set()
+    orphans: list[dict] = []
+    with sub_path.open(encoding="utf-8-sig", newline="") as fh:
+        import csv as _csv
+        for row in _csv.DictReader(fh):
+            bt = (row.get("blockType") or "").strip().lower()
+            if bt not in orphan_types:
+                continue
+            desc = row.get("description", "").strip()
+            key = _join_key(desc)
+            if not key or key in config_keys or key in seen:
+                continue
+            seen.add(key)
+            orphans.append({"blockType": row.get("blockType", ""), "question_text": desc})
+    return orphans
+
+
+def _call_openai_inferred(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+    user_msg = (
+        "Questions without LMS options (fill-in-the-blank and match types):\n"
+        + json.dumps(questions, ensure_ascii=False, indent=2)
+        + "\n\nDocument text:\n"
+        + doc_text
+    )
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": INFERRED_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    content = response.choices[0].message.content
+    parsed = json.loads(content)
+    if isinstance(parsed, list):
+        return parsed
+    for key in ("results", "answers", "questions", "data", "items"):
+        if isinstance(parsed.get(key), list):
+            return parsed[key]
+    raise ValueError(f"Unexpected inferred LLM response: keys={list(parsed.keys())}")
+
+
+def _extract_inferred(
+    client,
+    model: str,
+    orphan_questions: list[dict],
+    docs: list[str],
+) -> list[dict]:
+    """Send orphan questions to LLM with INFERRED_SYSTEM_PROMPT; aggregate by best confidence."""
+    payload = [
+        {"question_index": i, "blockType": q["blockType"], "question_text": q["question_text"]}
+        for i, q in enumerate(orphan_questions)
+    ]
+    best: dict[int, dict] = {}
+
+    for doc_str in docs:
+        doc_path = Path(doc_str).expanduser()
+        if not doc_path.is_absolute():
+            doc_path = PROJECT_ROOT / doc_path
+        if not doc_path.exists():
+            continue
+        doc_text = extract_doc_text(doc_path)
+        try:
+            results = _call_openai_inferred(client, model, payload, doc_text)
+        except Exception as exc:
+            print(f"  ERRO inferência [{doc_path.name}]: {exc}", file=sys.stderr)
+            continue
+        for item in results:
+            qi = item.get("question_index")
+            if qi is None:
+                continue
+            qi = int(qi)
+            conf = item.get("confidence", "unmatched")
+            prev = best.get(qi)
+            if prev is None or CONFIDENCE_RANK.get(conf, 0) > CONFIDENCE_RANK.get(
+                prev.get("confidence", "unmatched"), 0
+            ):
+                best[qi] = {**item, "source_doc": doc_path.name}
+
+    rows = []
+    for i, q in enumerate(orphan_questions):
+        m = best.get(i, {})
+        rows.append({
+            "blockType": q["blockType"],
+            "question_text": q["question_text"],
+            "doc_correct_answer": str(m.get("doc_correct_answer") or ""),
+            "confidence": m.get("confidence", "unmatched"),
+            "notes": str(m.get("notes") or ""),
+            "source_doc": m.get("source_doc", ""),
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
@@ -363,6 +524,14 @@ def _write_csv(rows: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=ANSWER_KEY_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_inferred_csv(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=INFERRED_COLUMNS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -487,6 +656,34 @@ def run(
         f"  Needs human review: {needs_review_n}\n"
         f"\nOutput: {output_path}"
     )
+
+    # Phase 2: infer answers for orphan questions (fillInTheBlank, match)
+    # Only runs when --run-dir is provided (submissions path is knowable).
+    if run_dir:
+        sub_path = Path(run_dir) / "submissions" / "submissions_export.csv"
+        if sub_path.exists():
+            orphans = _find_orphan_questions(sub_path, rows)
+            if orphans:
+                print(
+                    f"\nFase 2: {len(orphans)} pergunta(s) não encontrada(s) no gabarito LW "
+                    f"(preenchimento de lacunas / correspondência) — a inferir via Word..."
+                )
+                inferred_rows = _extract_inferred(client, effective_model, orphans, docs)
+                inferred_path = Path(run_dir) / "answer_key" / "inferred_answer_key.csv"
+                _write_inferred_csv(inferred_rows, inferred_path)
+                inf_conf = Counter(r["confidence"] for r in inferred_rows)
+                print(
+                    f"  Inferidas: high={inf_conf.get('high', 0)}, "
+                    f"medium={inf_conf.get('medium', 0)}, "
+                    f"low={inf_conf.get('low', 0)}, "
+                    f"unmatched={inf_conf.get('unmatched', 0)}\n"
+                    f"  Respostas inferidas escritas em: {inferred_path}"
+                )
+            else:
+                print("\nFase 2: não há perguntas orphan — todas têm gabarito LW.")
+        else:
+            print(f"\nFase 2: submissions_export.csv não encontrado em {sub_path} — ignorado.")
+
     print("Done.")
     return 0
 

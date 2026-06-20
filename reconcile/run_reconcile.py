@@ -48,7 +48,11 @@ from pathlib import Path
 from extractor.config import OUTPUT_DIR, ExtractorError, slugify
 from extractor.writers import write_csv, write_xlsx
 
-from .core import build_config_index, build_merged_index, check_answer, join_key, norm, reconcile_grade, to_decimal
+from .core import (
+    build_config_index, build_merged_index, build_inferred_index,
+    check_answer, check_inferred_answer,
+    join_key, norm, reconcile_grade, to_decimal,
+)
 
 REPORT_COLUMNS = [
     "assessment_id", "user_id", "username", "email",
@@ -103,6 +107,8 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
         _row("Sem match no gabarito (`no_config_match`)", ver.get("no_config_match", 0)),
         _row("Sem chave de resposta (`no_answer_key`)", ver.get("no_answer_key", 0)),
         _row("Multi-resposta ambíguo (`unverifiable_mcma`)", ver.get("unverifiable_mcma", 0)),
+        _row("Verificado por inferência (`inferred`)", ver.get("inferred", 0)),
+        _row("Inferência com baixa confiança (`inferred_low_confidence`)", ver.get("inferred_low_confidence", 0)),
         "",
         "---",
         "",
@@ -195,6 +201,28 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
             ),
             f"A necessitar revisão humana: **{needs}**"
             + (" ✅" if needs == 0 else ""),
+            "",
+            "---",
+            "",
+        ]
+
+    inf = ak.get("inferred", {}) if ak else {}
+    if inf:
+        inf_conf = inf.get("confidence_breakdown", {})
+        lines += [
+            "## Respostas inferidas (preenchimento de lacunas / correspondência)",
+            "",
+            "> ⚠️ Estas respostas foram inferidas pelo LLM a partir do gabarito ID / Docente "
+            "para perguntas que o LW não exporta. Tratar como indicativo — verificação humana necessária.",
+            "",
+            "| Confiança | Perguntas |",
+            "|-----------|----------:|",
+            _row("Alta (`high`)", inf_conf.get("high", 0)),
+            _row("Média (`medium`)", inf_conf.get("medium", 0)),
+            _row("Baixa (`low`)", inf_conf.get("low", 0)),
+            _row("Sem match (`unmatched`)", inf_conf.get("unmatched", 0)),
+            "",
+            f"Com confiança suficiente para reconciliação: **{inf.get('matched_count', 0)}**",
             "",
             "---",
             "",
@@ -327,12 +355,17 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
 
     # Load answer key early so build_merged_index() can enrich the config index.
     ak_rows: list = []
+    inferred_rows: list = []
     if run_dir:
         ak_early_path = Path(run_dir) / "answer_key" / "manual_answer_key.csv"
         if ak_early_path.exists():
             ak_rows = _read_csv(str(ak_early_path))
+        inferred_path = Path(run_dir) / "answer_key" / "inferred_answer_key.csv"
+        if inferred_path.exists():
+            inferred_rows = _read_csv(str(inferred_path))
 
     cfg_index = build_merged_index(exam_config, ak_rows) if ak_rows else build_config_index(exam_config)
+    inferred_index = build_inferred_index(inferred_rows) if inferred_rows else {}
 
     # Optional official grades from course_grades, keyed by (assessment_id, user_id).
     grade_override = {}
@@ -356,7 +389,15 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         bid = r.get("blockId"); desc = r.get("description")
 
         cfg = cfg_index.get(join_key(desc))
-        chk = check_answer(bt, ans, pts, mx, cfg)
+        if cfg is None and inferred_index:
+            inferred_entry = inferred_index.get(join_key(desc))
+            chk = (
+                check_inferred_answer(bt, ans, pts, mx, inferred_entry)
+                if inferred_entry
+                else check_answer(bt, ans, pts, mx, None)
+            )
+        else:
+            chk = check_answer(bt, ans, pts, mx, cfg)
         verifiable_counts[chk["verifiable"]] += 1
         if chk["flag"]:
             flag_counts[chk["flag"]] += 1
@@ -388,8 +429,8 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         # cross-student consistency (only meaningful within a question)
         consistency[(aid, bid)][norm(ans)].add(str(pts))
 
-        # manual review queue (questions without a usable key)
-        if chk["verifiable"] in ("no_config_match", "no_answer_key", "unverifiable_mcma"):
+        # manual review queue (questions without a usable key or with low-confidence inference)
+        if chk["verifiable"] in ("no_config_match", "no_answer_key", "unverifiable_mcma", "inferred_low_confidence"):
             q = queue[(aid, bid)]
             q["blockType"] = bt; q["description"] = desc
             q["question_number"] = (cfg or {}).get("question_number", "")
@@ -445,6 +486,8 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
                                "(e.g. 'match' type is not exported). Review parametrization once.",
             "no_answer_key": "Config row exists but has no configured correct answer. Review once.",
             "unverifiable_mcma": "Multi-select answer could not be reconstructed unambiguously. Review once.",
+            "inferred_low_confidence": "Inferred answer found in Word doc but with low/unmatched confidence — "
+                                       "manual verification required.",
         }
         queue_rows.append({
             "assessment_id": aid, "blockId": bid,
@@ -457,8 +500,26 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "note": notes.get(q.get("reason"), ""),
         })
 
-    # ---- answer key stats (ak_rows loaded earlier for build_merged_index) ----
+    # ---- answer key stats (ak_rows and inferred_rows loaded earlier) ----
     answer_key_summary: dict = {}
+    if inferred_rows:
+        from collections import Counter as _Counter
+        inf_conf = _Counter(r.get("confidence", "") for r in inferred_rows)
+        inf_matched = sum(
+            1 for v in inferred_index.values()
+            if v.get("confidence") in ("high", "medium")
+        )
+        answer_key_summary["inferred"] = {
+            "questions": len(inferred_rows),
+            "confidence_breakdown": dict(inf_conf),
+            "matched_count": inf_matched,
+        }
+        print(
+            f"Inferidas: {len(inferred_rows)} pergunta(s), "
+            f"high={inf_conf.get('high', 0)}, "
+            f"medium={inf_conf.get('medium', 0)}, "
+            f"matched={inf_matched}."
+        )
     if ak_rows:
         from collections import Counter
         conf_counts = Counter(r.get("confidence", "") for r in ak_rows)
@@ -493,14 +554,11 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         (consistency_rows, CONSISTENCY_COLUMNS, "consistency_report"),
         (queue_rows, QUEUE_COLUMNS, "manual_review_queue"),
     ]:
-        if rows:
-            report_dir = reconcile_dir / stem
-            report_dir.mkdir(exist_ok=True)
-            c = write_csv(rows, cols, report_dir, stem)
-            x = write_xlsx(rows, cols, report_dir, stem)
-            outputs[stem] = {"csv": str(c), "xlsx": str(x), "rows": len(rows)}
-        else:
-            outputs[stem] = {"rows": 0}
+        report_dir = reconcile_dir / stem
+        report_dir.mkdir(exist_ok=True)
+        c = write_csv(rows, cols, report_dir, stem)
+        x = write_xlsx(rows, cols, report_dir, stem)
+        outputs[stem] = {"csv": str(c), "xlsx": str(x), "rows": len(rows)}
 
     summary = {
         "tool": "learnworlds-reconcile",
