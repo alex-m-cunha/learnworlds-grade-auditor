@@ -1,288 +1,162 @@
-# LearnWorlds Assessment Responses Exporter
+# LearnWorlds Assessment Exporter & Auditor
 
-Internal tool for the **Nova SBE Executive Education LMS team**.
+Ferramenta interna da equipa LMS da **Nova SBE Executive Education**.
 
-> **Three components live here:**
-> 1. **This exporter** (`export_assessment_responses.py`) — the simple **7-column
->    "teaching view"** (offline/live), documented below.
-> 2. **The extractor** (`extractor/`) — a modular, **audit-grade extractor** that
->    produces the complete submissions CSV/XLSX (24 columns, JSON-preserved nested
->    data, `derived_score_status`, username enrichment), plus **course grades** and
->    the **exam-config** answer key imported from a manual UI export.
->    See **[`extractor/README.md`](extractor/README.md)**. Run: `python -m extractor.run_extract`.
-> 3. **The reconciler** (`reconcile/`) — a **deterministic** validation phase (no API,
->    no LLM) that joins the three sources and **flags** discrepancies: grade
->    reconciliation, answer-key contradictions, cross-student scoring inconsistencies,
->    and a deduplicated manual-review queue. Run: `python -m reconcile.run_reconcile --label <folder>`.
->
-> **End-to-end audit process:** see **[`PROCESSO.md`](PROCESSO.md)** for the full
-> step-by-step workflow (extract → reconcile → human review). The components coexist;
-> this exporter is unchanged.
+Extrai dados de avaliações do LearnWorlds (API + export UI + gabaritos Word) e reconcilia-os
+de forma determinística para suportar auditorias de notas.
+
+**Guião de operação detalhado → [`PROCESSO.md`](PROCESSO.md)**
 
 ---
 
-## 1. What this tool does
+## Como usar (modo normal)
 
-It exports learner **assessment responses** from LearnWorlds into **CSV** and **XLSX**.
+### 1. Configuração inicial (uma vez)
 
-It:
-
-1. Gets the assessment responses (from the LearnWorlds API, or from a local JSON sample).
-2. Saves a **timestamped raw copy** of the response to `output/` (audit trail).
-3. **Normalizes** the data into one row per learner answer per question.
-4. Exports timestamped **CSV** and **XLSX** files to `output/`.
-
-Each output row contains: `learner_email`, `final_score`, `question_text`,
-`submitted_answer`, `points_earned`, `max_points`, `status`.
-
----
-
-## 2. Current API access limitation
-
-> **We do not currently have a valid active LearnWorlds Access Token.**
-> All existing tokens appear to be expired, and new ones cannot be created yet.
-
-Because of this, the tool runs in two modes:
-
-- **`offline`** — works today, with no token. Reads a local JSON sample and runs the full
-  pipeline. Use this for development, testing, and validating the structure.
-- **`live`** — requires a **valid** LearnWorlds Access Token added manually to `.env`.
-  Use this once token access is restored.
-
-Until a valid token exists, keep `EXPORT_MODE=offline`.
-
----
-
-## 3. Where the tool is stored
-
-This tool lives in the **restricted LMS team OneDrive folder**:
+**a) Preencher o `.env`** — copiar `.env.example` para `.env` e preencher:
 
 ```
-04. LearnWorlds / Avaliações / learnworlds-assessment-exporter
+LEARNWORLDS_API_URL=https://online.executiveducation.novasbe.pt/admin/api
+LEARNWORLDS_SCHOOL_ID=<school id>
+LEARNWORLDS_ACCESS_TOKEN=<token válido>
+OPENAI_API_KEY=<chave OpenAI — só necessária para gabaritos Word>
+OPENAI_MODEL=gpt-4o
 ```
 
-Access is limited to the LMS team. The real `.env` file may be stored here for operational
-simplicity, **because access is restricted**. The scripts and launchers are written to handle
-OneDrive paths that contain spaces and accented characters.
+**b) Preencher o `assessment.cfg`** — ficheiro na raiz do projeto, para o assessment em curso:
 
----
-
-## 4. Required inputs
-
-| Input | Offline mode | Live mode |
-|-------|--------------|-----------|
-| `.env` file | ✅ required | ✅ required |
-| `INPUT_JSON_PATH` (local sample) | ✅ required | — |
-| `LEARNWORLDS_API_URL` | — | ✅ required |
-| `LEARNWORLDS_SCHOOL_ID` | — | ✅ required |
-| `LEARNWORLDS_ACCESS_TOKEN` (valid) | — | ✅ required |
-| `ASSESSMENT_ID` | — | ✅ required |
-
----
-
-## 5. `EXPORT_MODE=offline` vs `EXPORT_MODE=live`
-
-**`offline`**
-- Does **not** call the LearnWorlds API.
-- Does **not** require a token or school id.
-- Reads the JSON at `INPUT_JSON_PATH`.
-- Saves a timestamped raw copy, normalizes, and exports CSV/XLSX if the shape can be parsed.
-- If parsing fails, prints a clear message (the raw JSON is still saved).
-
-**`live`**
-- Requires `LEARNWORLDS_API_URL`, `LEARNWORLDS_SCHOOL_ID`, `LEARNWORLDS_ACCESS_TOKEN`,
-  `ASSESSMENT_ID`.
-- Calls `GET {LEARNWORLDS_API_URL}/v2/assessments/{ASSESSMENT_ID}/responses` with headers
-  `Authorization: Bearer <token>` and `Lw-Client: <school_id>`.
-- Follows pagination defensively (up to 500 pages), saves the full raw page collection,
-  normalizes, and exports CSV/XLSX.
-
----
-
-## 6. How to create and fill the `.env` file
-
-1. Duplicate **`.env.example`** and rename the copy to **`.env`**.
-2. Leave `EXPORT_MODE=offline` for now.
-3. Confirm `INPUT_JSON_PATH=input/sample_response.json`.
-4. When token access is restored (live mode), set:
-   - `EXPORT_MODE=live`
-   - `LEARNWORLDS_SCHOOL_ID=<your school / client id>`
-   - `LEARNWORLDS_ACCESS_TOKEN=<a valid existing token>`
-   - `ASSESSMENT_ID=<the assessment id>`
-   - `LEARNWORLDS_API_URL=https://online.executiveducation.novasbe.pt/admin/api`
-     (no trailing slash; the script strips one if present)
-
-`LEARNWORLDS_CLIENT_ID` / `LEARNWORLDS_CLIENT_SECRET` are kept in `.env.example` only as
-optional reference fields. **They are not used in v1.**
-
----
-
-## 7. Security warning — the `.env` file
-
-- The `.env` file may contain **sensitive LearnWorlds API credentials** (access token, school id).
-- **Do not share the `.env` file outside the LMS team.**
-- Do not commit it to any repository (it is already in `.gitignore`).
-- Do not paste its contents into chats, tickets, or emails.
-
----
-
-## 8. Security warning — exported learner data
-
-- The exported CSV/XLSX files may contain **learner personal data** (emails) and **assessment
-  results**.
-- Keep all output **inside the restricted LMS team folder**.
-- Do **not** create public links to this folder or to output files.
-- Do **not** email exported CSV/XLSX files unless strictly necessary.
-
----
-
-## 9. Token management note
-
-- This tool **does not create** new access tokens.
-- This tool **does not refresh** access tokens.
-- This tool **does not call any authentication or token-generation endpoint**, and does not use
-  a client-credentials flow.
-- Live mode only uses a **valid LearnWorlds Access Token manually added to `.env`**.
-- If no valid token exists, **use offline mode** until token access is restored.
-
----
-
-## 10. How to run manually via terminal
-
-**macOS / Linux**
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python export_assessment_responses.py
+```
+PROGRAM=pggf2
+LABEL=uc5-fintech
+ASSESSMENT_ID=6a05f692aa02a8f78f0b098d
 ```
 
-**Windows**
+### 2. Lançar (macOS)
 
-```bat
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python export_assessment_responses.py
+Fazer duplo-clique em **`run_audit.command`**.
+
+> Primeira vez: correr uma vez no Terminal `chmod +x run_audit.command`
+
+### 2. Lançar (Windows)
+
+Fazer duplo-clique em **`run_audit.bat`**.
+
+---
+
+## O que o lançador faz (6 passos)
+
+O lançador abre diálogos gráficos em sequência. Os campos 1–3 vêm **pré-preenchidos** com
+os valores do `assessment.cfg` — basta confirmar com OK se estiverem corretos.
+
+| Passo | Diálogo | O que acontece |
+|-------|---------|----------------|
+| **[1/6]** | Programa | Sigla + edição (ex: `pggf2`) |
+| **[2/6]** | Atividade | Título/label (ex: `uc5-fintech`) |
+| **[3/6]** | Assessment ID | ID de 24 chars do URL do admin LW |
+| **[4/6]** | Gabarito LW | Selecionar o XLSX exportado da UI → copia+renomeia para `input/` → corre submissões (API) + importação do gabarito |
+| **[5/6]** | Guião Word | Sim/Não → se Sim: selecionar 1 ou mais .docx (Cmd+clique para múltiplos) → copia+renomeia para `input/` → extrai respostas via OpenAI |
+| **[6/6]** | Reconciliação | Sim/Não → se Sim: reconcilia submissões com gabarito e gera relatórios |
+
+---
+
+## O que cada ficheiro é
+
+### Ficheiros de configuração
+
+| Ficheiro | O que é |
+|----------|---------|
+| `assessment.cfg` | Configuração do assessment em curso: programa, label, assessment ID. **Não tem credenciais.** Actualizar antes de cada avaliação. |
+| `.env` | Credenciais da API LearnWorlds e chave OpenAI. **Nunca partilhar.** Não está no git. |
+| `.env.example` | Modelo do `.env` com placeholders. Sem valores reais. |
+| `requirements.txt` | Lista de dependências Python. |
+
+### Launchers
+
+| Ficheiro | O que é |
+|----------|---------|
+| `run_audit.command` | Lançador macOS — duplo-clique para correr o pipeline completo (6 passos). |
+| `run_audit.bat` | Lançador Windows — duplo-clique para correr o pipeline completo (6 passos). |
+
+### Código
+
+| Pasta / ficheiro | O que é |
+|------------------|---------|
+| `extractor/` | Pacote Python com os extractores de dados da API e do export UI. |
+| `extractor/run_extract.py` | Extrai as submissões dos alunos via API (`GET /v2/assessments/{id}/responses`). |
+| `extractor/run_exam_config.py` | Importa o gabarito LW a partir do XLSX exportado manualmente da UI. |
+| `extractor/run_grades.py` | Extrai notas oficiais do curso via API (uso avançado, não incluído no launcher). |
+| `extractor/config.py` | Carrega configuração de `assessment.cfg` + `.env`, define `resolve_step_dir()`. |
+| `reconcile/` | Pacote Python com o reconciliador determinístico. |
+| `reconcile/run_reconcile.py` | Junta submissões + gabarito, aplica regras de auditoria, gera relatórios. |
+| `reconcile/core.py` | Lógica de negócio: `check_answer()`, `reconcile_grade()`, `join_key()`, `norm()`. |
+| `tools/extract_answer_key.py` | Extrai respostas corretas de ficheiros Word via OpenAI e cruza com o gabarito LW. |
+
+### Pastas de dados (não estão no git)
+
+| Pasta | O que é |
+|-------|---------|
+| `input/<programa>/exam_configs/` | Cópias dos XLSX exportados da UI, renomeados como `<label>_exam_config.xlsx`. Criada automaticamente pelo launcher. |
+| `input/<programa>/word_docs/` | Cópias dos guiões Word dos docentes, renomeados como `<label>_<nome_original>.docx`. Criada automaticamente. |
+| `output/<programa>/<label>/<timestamp>/` | Resultados de uma corrida. Nunca sobrescritos. Ver estrutura abaixo. |
+
+---
+
+## Estrutura de output
+
+```
+output/
+  <programa>/                         ex: pggf2
+    <label>/                          ex: uc5-fintech
+      <YYYY-MM-DD_HHmmss>/            uma pasta por corrida, nunca sobrescrita
+        submissions/
+          raw/
+            raw_response.json         resposta crua da API, todas as páginas
+            extraction_report.json    contagens e avisos da extração
+          submissions_export.csv      1 linha por bloco de resposta por aluno
+          submissions_export.xlsx
+        exam_config/
+          raw/
+            raw_exam_config.json
+            extraction_report.json
+          exam_config_as_is.csv       gabarito LW: respostas corretas + opções
+          exam_config_as_is.xlsx
+        answer_key/                   só se o Passo 5 (Word) foi corrido
+          manual_answer_key.csv       gabarito docente extraído via LLM
+        reconcile/                    só se o Passo 6 foi corrido
+          reconciliation_report/
+            reconciliation_report.csv     1 linha por (aluno × pergunta)
+            reconciliation_report.xlsx
+          grade_reconciliation/
+            grade_reconciliation.csv      nota oficial vs recalculada, por aluno
+            grade_reconciliation.xlsx
+          consistency_report/
+            consistency_report.csv        mesma resposta pontuada diferente entre alunos
+            consistency_report.xlsx
+          manual_review_queue/
+            manual_review_queue.csv       perguntas sem gabarito ou ambíguas
+            manual_review_queue.xlsx
+          reconciliation_summary.json
+          reconciliation_summary.md       sumário legível com contagens e flags
 ```
 
 ---
 
-## 11. How to run on macOS (`run_export.command`)
+## Segurança
 
-1. Open the folder.
-2. Duplicate `.env.example` and rename it to `.env`.
-3. Set `EXPORT_MODE=offline` until a valid LearnWorlds Access Token is available.
-4. Double-click **`run_export.command`**.
-5. If macOS blocks execution, open Terminal in this folder and run:
-   ```bash
-   chmod +x run_export.command
-   ```
-   Then double-click again.
-
-The launcher creates a local `.venv`, installs dependencies, runs the exporter, and keeps the
-Terminal window open so you can read the result.
+- **`.env`** — credenciais sensíveis. Nunca commitar, nunca partilhar fora da equipa LMS.
+- **`output/`** — dados pessoais de alunos e resultados de avaliação. Manter na pasta restrita OneDrive. Não criar links públicos. Não enviar por email.
+- **`input/`** — cópias dos gabaritos (contêm as respostas corretas). Mesmas restrições.
+- Todos estão no `.gitignore`. O `assessment.cfg` é o único ficheiro de configuração que vai para o git (não tem credenciais).
 
 ---
 
-## 12. How to run on Windows (`run_export.bat`)
+## Troubleshooting rápido
 
-1. Open the folder.
-2. Duplicate `.env.example` and rename it to `.env`.
-3. Set `EXPORT_MODE=offline` until a valid LearnWorlds Access Token is available.
-4. Double-click **`run_export.bat`**.
-
-The launcher creates a local `.venv`, installs dependencies, runs the exporter, and keeps the
-Command Prompt window open so you can read the result.
-
----
-
-## 13. Where output files are saved
-
-Everything is written to the **`output/`** folder, with timestamped names so nothing is ever
-overwritten:
-
-```
-output/raw_response_2026-06-17_143000.json
-output/assessment_responses_2026-06-17_143000.csv
-output/assessment_responses_2026-06-17_143000.xlsx
-```
-
----
-
-## 14. Exported fields
-
-| Column | Source (LearnWorlds support guidance) |
-|--------|----------------------------------------|
-| `learner_email` | learner email field (`email` / `user.email` / `learner.email`) |
-| `final_score` | final score / `grade` |
-| `question_text` | `description` |
-| `submitted_answer` | `answer` |
-| `points_earned` | `points` |
-| `max_points` | `blockMaxScore` |
-| `status` | **calculated** (see below) |
-
-The parser is defensive: it also accepts alternative key names (e.g. `final_score`, `score`,
-`question_text`, `maxScore`) and both a nested learner-with-blocks shape and a flat
-one-row-per-answer shape.
-
----
-
-## 15. How `status` is calculated
-
-There is no direct correct/incorrect field, so it is computed from the points:
-
-- **`correct`** — `points_earned` equals `max_points`
-- **`incorrect`** — `points_earned` equals `0`
-- **`partial`** — anything in between
-
-If the points are missing or not numeric, `status` is left blank.
-
----
-
-## 16. Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `No .env file found` | Copy `.env.example` to `.env`. |
-| `Live mode is missing required .env values` | Fill the live-mode variables, or set `EXPORT_MODE=offline`. |
-| `Authentication failed (HTTP 401/403)` | The token is missing, expired, or invalid. Add a valid token to `.env`, or use offline mode. This tool will not create/refresh tokens. |
-| `Input JSON file not found` | Check `INPUT_JSON_PATH`, or place a sample at `input/sample_response.json`. |
-| `no usable rows could be extracted` | The response shape differs from expectations. The raw JSON was still saved — share it so the parser can be adjusted. |
-| `Missing dependency ...` | Run `pip install -r requirements.txt`, or just use the launcher. |
-| macOS blocks the launcher | `chmod +x run_export.command`, then double-click again. |
-| Want full tracebacks | Set `DEBUG=true` in `.env`. |
-
----
-
-## 17. First-run validation checklist
-
-- [ ] `.env` exists (copied from `.env.example`), `EXPORT_MODE=offline`.
-- [ ] `input/sample_response.json` exists.
-- [ ] Run the tool (terminal or launcher).
-- [ ] A `raw_response_<timestamp>.json` appears in `output/`.
-- [ ] A CSV **and** an XLSX appear in `output/` with the 7 expected columns.
-- [ ] `status` values look right (correct / incorrect / partial) for the sample.
-- [ ] Re-running produces **new** timestamped files (nothing overwritten).
-
----
-
-## 18. Next step once API token access is restored
-
-1. Set `EXPORT_MODE=live` in `.env`.
-2. Add a valid `LEARNWORLDS_ACCESS_TOKEN` and `LEARNWORLDS_SCHOOL_ID`.
-3. Set `ASSESSMENT_ID`.
-4. Run the tool — it calls `GET /v2/assessments/{ASSESSMENT_ID}/responses` and saves the real
-   raw JSON to `output/`.
-5. If the real response shape differs, **adjust the parser** in `normalize_responses()` using the
-   saved raw JSON.
-6. **Validate** the export against the native LearnWorlds **PDF feedback report** for a small
-   sample of learners, checking:
-   - learner email
-   - final score
-   - question text
-   - submitted answer
-   - points earned
-   - max points
-   - calculated correct / incorrect / partial status
+| Sintoma | Solução |
+|---------|---------|
+| `Authentication failed (HTTP 401/403)` | Token LW inválido/expirado — colar novo token em `.env` |
+| `No .env file found` | Copiar `.env.example` para `.env` e preencher |
+| `OPENAI_API_KEY not set` | Adicionar `OPENAI_API_KEY=sk-...` ao `.env` |
+| macOS bloqueia o launcher | Correr uma vez: `chmod +x run_audit.command` |
+| Tracebacks completos | Adicionar `DEBUG=true` ao `.env` |
+| `submissions_export.csv` não encontrado na reconciliação | Correr primeiro o Passo 4 (gabarito LW) com o mesmo `--run-dir` |
