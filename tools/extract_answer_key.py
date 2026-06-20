@@ -84,6 +84,25 @@ during extraction to preserve Word formatting that would otherwise be invisible 
 For True/False questions, identify which of Verdadeiro/Verdade/True or Falso/False is marked correct.
 For TMCMA (multiple correct answers), return all correct options separated by "; ".
 
+For FILL-IN-THE-BLANK questions (LMS blockType "fillInTheBlankBlock"):
+- The question text contains blanks marked as []. Each blank has its own set of accepted answers.
+- In the Word document, look for labels like "Variações aceites (espaço 1):", "Espaço 1:",
+  "Resposta espaço 1:", or similar. Accepted variants for the same blank are separated by
+  ";", ",", or newlines.
+- Return all blanks concatenated with " | " as separator, and variants within each blank
+  separated by "; ".
+  Example: "Custo Médio Ponderado de Capital; custo médio ponderado de capital | capital; Capital"
+- If the document only gives one answer per blank (no variants listed), return that answer.
+
+For MATCH questions (LMS blockType "match"):
+- The question asks students to pair items from Column A with items from Column B.
+- In the Word document, look for explicit pair labels ("Par 1 — Coluna A / Coluna B"),
+  a table with two columns, or colour-coded rows where the same colour indicates a pair
+  (e.g., rows 3–4 are pair 1, rows 5–6 are pair 2, rows 7–8 are pair 3, etc.).
+- Return each pair as "A → B", with pairs separated by "; ".
+  Example: "Forward cambial → Fixa a taxa de câmbio; Swap de taxa de juro → Troca taxa variável por fixa"
+- Preserve the exact text as it appears in the document for each side of the pair.
+
 Confidence rubric:
 - "high": question text matches clearly, correct answer marking is unambiguous
 - "medium": question text matches with minor wording differences, or marking is clear but match has \
