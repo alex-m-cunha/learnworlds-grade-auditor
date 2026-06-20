@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 
 def slugify(text: str) -> str:
-    """Make a filesystem-safe folder/file name (keeps unicode letters/accents)."""
-    text = re.sub(r"[\s/\\]+", "-", str(text).strip())
-    text = re.sub(r"[^\w\-]+", "", text, flags=re.UNICODE)
+    """Make a filesystem-safe folder/file name (ASCII only, no accents)."""
+    text = unicodedata.normalize("NFKD", str(text))
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"[\s/\\]+", "-", text.strip())
+    text = re.sub(r"[^\w\-]+", "", text)
     text = re.sub(r"-+", "-", text).strip("-").lower()
     return text or "untitled"
 
