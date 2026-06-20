@@ -56,15 +56,15 @@ REGRAS GERAIS:
   palavras por extenso no mesmo contexto.
 - O programa deve aparecer sempre em maiúsculas (ex: pggf2 → PGGF2, mba3 → MBA3).
 - "correspondência exacta" = confidence high no gabarito ID/Docente. Não usar "alta".
-- Nunca escrever "documento Word" — usar sempre "Gabarito ID / Docente".
+- Nunca escrever "documento Word" — usar sempre "gabarito ID / Docente".
 
 REGRAS SOBRE OS DADOS:
 - As perguntas em `unverifiable_questions` (sem gabarito no LW) também NÃO foram processadas
-  pelo Gabarito ID / Docente — portanto NÃO têm resposta correcta em NENHUMA fonte disponível.
+  pelo gabarito ID / Docente — portanto NÃO têm resposta correcta em NENHUMA fonte disponível.
   Dizer isso claramente: "X perguntas sem resposta correcta definida em qualquer gabarito".
 - `answer_accepted_but_zero`: resposta correcta mas 0 pontos — PROBLEMA REAL, correcção urgente.
-- `answer_key_real_discrepancies`: Gabarito LW e Gabarito ID / Docente divergem — PROBLEMA REAL.
-- `answer_key_doc_not_found`: pergunta não encontrada no Gabarito ID / Docente — o Gabarito LW
+- `answer_key_real_discrepancies`: gabarito LW e gabarito ID / Docente divergem — PROBLEMA REAL.
+- `answer_key_doc_not_found`: pergunta não encontrada no gabarito ID / Docente — o gabarito LW
   está correcto, mas não há validação cruzada do docente para esta pergunta.
 - Next steps: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
@@ -87,12 +87,12 @@ Avaliação da unidade curricular [label_display] no âmbito do programa [progra
 [Bullets imediatamente a seguir — SEM "Dados:", SEM "Pontos de atenção:", SEM "Conclusão:":]
 
 - O teste contém um total de [active_questions_count] perguntas.
-- O Gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
-- O Gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count]
+- O gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
+- O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count]
   perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio]:
     - Pergunta [Q número]: "[primeiros 80 chars do enunciado]"
     [uma sub-linha por cada item de answer_key_doc_not_found]
-- Foram validadas [answer_key_matched_count] perguntas cruzando com o Gabarito ID / Docente.
+- Foram validadas [answer_key_matched_count] perguntas cruzando com o gabarito ID / Docente.
 - [Se unverifiable_questions não for vazio:] Há [N] pergunta(s) que não foram detectadas em
   nenhum gabarito:
     - [Para cada item de unverifiable_questions: "(sem número atribuído): [primeiros 80 chars]"]
@@ -105,15 +105,17 @@ Avaliação da unidade curricular [label_display] no âmbito do programa [progra
 ### Extração de submissões (API)
 [1-2 linhas: estado + alunos + total de respostas]
 
-### Importação do Gabarito LW (XLSX)
+### Importação do gabarito LW (XLSX)
 [1-2 linhas: quantas perguntas com gabarito verificável; quantas sem gabarito no sistema LW.]
 
 ### Gabarito ID / Docente
 [Se não correu: "Não executado nesta corrida."
 Se correu:
 - Cobertura: N perguntas esperadas, N com correspondência exacta, N não encontradas.
-- Não encontradas EXPLICITAMENTE: Q[número]: "[100 chars]" para cada item de answer_key_doc_not_found.
-- ⚠️ ADVERTÊNCIA se answer_key_matched_count < expected_answer_key_count.]
+- Se houver itens em answer_key_doc_not_found: listar cada um como "Q[número]: [100 chars]"
+- Se answer_key_matched_count < expected_answer_key_count: uma linha de aviso em linguagem natural
+  indicando quantas perguntas estão em falta face ao total do teste (active_questions_count = 45),
+  sem usar maiúsculas de destaque nem palavras em caps.]
 
 ### Reconciliação de respostas
 [2-3 linhas:
@@ -128,8 +130,8 @@ Se correu:
 [H3 por cada problema, em linguagem natural sem jargão.
 - Respostas correctas com 0 pontos → título "Resposta certa mas pontuação zero": listar pergunta
   (número + início do enunciado), alunos (nome + resposta enviada + pontos atribuídos).
-- Divergências entre Gabarito LW e Gabarito ID / Docente → listar pergunta, resposta LW vs
-  resposta do Gabarito ID / Docente.
+- Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
+  resposta do gabarito ID / Docente.
 Se não houver: "Nenhum problema identificado."]
 
 ---
@@ -144,10 +146,10 @@ ATENÇÃO: existem 2 situações DISTINTAS — não misturar. NÃO escrever os n
 - **(sem número atribuído)**: "[primeiros 80 chars]" — Não foi possível verificar
   automaticamente a resposta correcta desta pergunta. Recomenda-se verificação manual.
 
-**Presentes no Gabarito LW mas não encontradas no Gabarito ID / Docente:**
-[Perguntas de `answer_key_doc_not_found` — TÊM resposta no Gabarito LW. Uma linha por pergunta:]
-- **Q[número]**: "[primeiros 80 chars]" — Presente no Gabarito LW (resposta:
-  "[lw_correct_answer curta]"), mas não encontrada no Gabarito ID / Docente para validação.
+**Presentes no gabarito LW mas não encontradas no gabarito ID / Docente:**
+[Perguntas de `answer_key_doc_not_found` — TÊM resposta no gabarito LW. Uma linha por pergunta:]
+- **Q[número]**: "[primeiros 80 chars]" — Presente no gabarito LW (resposta:
+  "[lw_correct_answer curta]"), mas não encontrada no gabarito ID / Docente para validação.
 
 Sem jargão técnico em nenhuma das entradas.]
 
