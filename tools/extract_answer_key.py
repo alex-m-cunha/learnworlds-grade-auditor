@@ -53,6 +53,7 @@ CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1, "unmatched": 0}
 
 INFERRED_COLUMNS = [
     "blockType",
+    "doc_question_number",
     "question_text",
     "doc_correct_answer",
     "confidence",
@@ -102,12 +103,16 @@ Return a single JSON object with a "results" key:
 {"results": [
   {
     "question_index": 0,
+    "doc_question_number": "7",
     "doc_correct_answer": "Custo Médio Ponderado de Capital; custo médio ponderado de capital | capital",
     "confidence": "high",
     "notes": "Found fill-in-blank with Variações aceites labels for 2 blanks."
   },
   ...
 ]}
+
+"doc_question_number" is the question number from the Word document. Each question in the
+document is preceded by a [QUESTION:N] marker — use that N directly (e.g. [QUESTION:5] → "5").
 """
 
 SYSTEM_PROMPT = """\
@@ -139,6 +144,8 @@ Correct answer marking conventions (look for any of these):
 
 The document text uses [BOLD], [STYLE:...], [COLOR:#...], [TABLE] / [/TABLE] markers inserted \
 during extraction to preserve Word formatting that would otherwise be invisible in plain text.
+Each question in the document is preceded by a [QUESTION:N] marker indicating its sequential
+number. Use that N as the "doc_question_number" in your response.
 
 For True/False questions, identify which of Verdadeiro/Verdade/True or Falso/False is marked correct.
 For TMCMA (multiple correct answers), return all correct options separated by "; ".
@@ -414,6 +421,36 @@ def _render_table_rows(tbl_elem, doc) -> list[str]:
     return rows
 
 
+_NS_W_URI = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_EXPLICIT_Q_NUM_RE = re.compile(
+    r"(?:^|(?<=\s))(\d+)[.)]\s"          # "7. " or "7) "
+    r"|(?:Pergunta|Questão|Question)\s*[nN]?[°º.]?\s*(\d+)",  # "Pergunta 7" / "Question 7"
+    re.IGNORECASE,
+)
+
+
+def _first_row_numpr(tbl_elem) -> tuple | None:
+    """Return (numId, ilvl) for the first auto-numbered paragraph in the table's first row, or None."""
+    for tag_row, tr_elem in _iter_block_items(tbl_elem):
+        if tag_row != "tr":
+            continue
+        for tag_c, tc_elem in _iter_block_items(tr_elem):
+            if tag_c != "tc":
+                continue
+            for btag, bchild in _iter_block_items(tc_elem):
+                if btag != "p":
+                    continue
+                nid_el = bchild.find(f".//{{{_NS_W_URI}}}numId")
+                ilvl_el = bchild.find(f".//{{{_NS_W_URI}}}ilvl")
+                if nid_el is not None:
+                    nid = nid_el.get(f"{{{_NS_W_URI}}}val", "0")
+                    ilvl = ilvl_el.get(f"{{{_NS_W_URI}}}val", "0") if ilvl_el is not None else "0"
+                    return (nid, ilvl)
+            return None  # only inspect first cell
+        return None      # only inspect first row
+    return None
+
+
 def extract_doc_text(path: Path) -> str:
     try:
         from docx import Document
@@ -425,6 +462,8 @@ def extract_doc_text(path: Path) -> str:
 
     doc = Document(path)
     sections: list[str] = []
+    tbl_n = 0
+    numpr_counters: dict = {}  # (numId, ilvl) -> running count
 
     for tag, block in _iter_block_items(doc.element.body):
         if tag == "p":
@@ -434,8 +473,29 @@ def extract_doc_text(path: Path) -> str:
                 sections.append(line)
 
         elif tag == "tbl":
+            tbl_n += 1
             inner = _render_table_rows(block, doc)
-            sections.append("[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
+
+            # Priority 1: explicit number in first-row text ("7." / "Pergunta 7")
+            q_num: str | None = None
+            if inner:
+                m = _EXPLICIT_Q_NUM_RE.search(inner[0])
+                if m:
+                    q_num = m.group(1) or m.group(2)
+
+            # Priority 2: auto-numbering via numPr (always increment counter)
+            numpr = _first_row_numpr(block)
+            if numpr:
+                numpr_counters[numpr] = numpr_counters.get(numpr, 0) + 1
+                if q_num is None:
+                    q_num = str(numpr_counters[numpr])
+
+            # Priority 3: fallback — sequential table position
+            if q_num is None:
+                q_num = str(tbl_n)
+
+            # [QUESTION:N] lets the LLM read the question number directly
+            sections.append(f"[QUESTION:{q_num}]\n[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
 
     return "\n".join(sections)
 
@@ -593,6 +653,7 @@ def _extract_inferred(
         m = best.get(i, {})
         rows.append({
             "blockType": q["blockType"],
+            "doc_question_number": str(m.get("doc_question_number") or ""),
             "question_text": q["question_text"],
             "doc_correct_answer": str(m.get("doc_correct_answer") or ""),
             "confidence": m.get("confidence", "unmatched"),
