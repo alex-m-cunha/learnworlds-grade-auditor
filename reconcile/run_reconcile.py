@@ -82,6 +82,7 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
     inconsistent = summary.get("inconsistent_scoring_questions", 0)
     queue_n = summary.get("manual_review_questions", 0)
     outputs = summary.get("outputs", {})
+    ak = summary.get("answer_key", {})
 
     def _row(label, val):
         return f"| {label} | {val} |"
@@ -160,6 +161,45 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
         "",
         "---",
         "",
+    ]
+
+    if ak:
+        conf = ak.get("confidence_breakdown", {})
+        match = ak.get("answers_match_breakdown", {})
+        needs = ak.get("needs_review", 0)
+        discrepancies = ak.get("discrepancies", 0)
+        sources = ak.get("source_docs", [])
+        lines += [
+            "## Gabarito docente (Word → LLM)",
+            "",
+            f"**Guiões:** {', '.join(f'`{s}`' for s in sources) if sources else '—'}",
+            "",
+            "| Confiança | Perguntas |",
+            "|-----------|----------:|",
+            _row("Alta (`high`)", conf.get("high", 0)),
+            _row("Média (`medium`)", conf.get("medium", 0)),
+            _row("Baixa (`low`)", conf.get("low", 0)),
+            _row("Sem match (`unmatched`)", conf.get("unmatched", 0)),
+            "",
+            "| Cruzamento LW vs Word doc | Perguntas |",
+            "|---------------------------|----------:|",
+            _row("Concordam (`yes`)", match.get("yes", 0)),
+            _row("Discrepância (`no`)", match.get("no", 0)),
+            _row("Só em LW (`lw_only`)", match.get("lw_only", 0)),
+            _row("Só no doc (`doc_only`)", match.get("doc_only", 0)),
+            "",
+            (
+                f"Discrepâncias LW ≠ Word doc: **{discrepancies}**"
+                + (" ✅" if discrepancies == 0 else "")
+            ),
+            f"A necessitar revisão humana: **{needs}**"
+            + (" ✅" if needs == 0 else ""),
+            "",
+            "---",
+            "",
+        ]
+
+    lines += [
         "## Outputs",
         "",
     ]
@@ -408,6 +448,30 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "note": notes.get(q.get("reason"), ""),
         })
 
+    # ---- answer key stats (optional — present if extract_answer_key was run) ----
+    answer_key_summary: dict = {}
+    ak_path = (Path(run_dir) / "answer_key" / "manual_answer_key.csv") if run_dir else None
+    if ak_path and ak_path.exists():
+        ak_rows = _read_csv(str(ak_path))
+        from collections import Counter
+        conf_counts = Counter(r.get("confidence", "") for r in ak_rows)
+        match_counts = Counter(r.get("answers_match", "") for r in ak_rows)
+        sources = sorted({r.get("source_doc", "") for r in ak_rows if r.get("source_doc")})
+        answer_key_summary = {
+            "questions": len(ak_rows),
+            "confidence_breakdown": dict(conf_counts),
+            "answers_match_breakdown": dict(match_counts),
+            "discrepancies": match_counts.get("no", 0),
+            "needs_review": sum(1 for r in ak_rows if r.get("needs_review") == "true"),
+            "source_docs": sources,
+        }
+        print(
+            f"Answer key: {len(ak_rows)} question(s), "
+            f"high={conf_counts.get('high', 0)}, "
+            f"unmatched={conf_counts.get('unmatched', 0)}, "
+            f"discrepancies={match_counts.get('no', 0)}."
+        )
+
     # ---- write outputs ----
     # Each report gets its own subfolder; summary JSON stays at reconcile/ root.
     reconcile_dir.mkdir(parents=True, exist_ok=True)
@@ -442,6 +506,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         "grade_status_counts": dict(grade_status_counts),
         "inconsistent_scoring_questions": len(consistency_rows),
         "manual_review_questions": len(queue_rows),
+        "answer_key": answer_key_summary,
         "notes": [
             "Flags are deterministic; partial-credit (answer_accepted_but_partial) is informational.",
             "derived_pct = round(Σpoints/Σmax*100); compared to the official grade only when present.",
