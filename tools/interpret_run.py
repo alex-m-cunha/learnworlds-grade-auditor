@@ -66,6 +66,11 @@ REGRAS SOBRE OS DADOS:
 - `answer_correct_per_doc_but_zero`: aluno respondeu o que o docente pretendia (gabarito ID /
   Docente) mas o LW não aceitou e deu 0 pontos — ERRO DE PARAMETRIZAÇÃO no LW, o mais grave de
   todos. Usar linguagem de urgência máxima.
+- `answer_not_accepted_but_full` (em `not_accepted_but_full_flags`): o gabarito não reconhece a
+  resposta como correcta MAS o LW atribuiu pontuação completa — possível falha no gabarito ou
+  resposta alternativa válida que o gabarito não prevê. NÃO confundir com "resposta certa, 0 pontos":
+  aqui o aluno TEM pontos. Descrever como "resposta não reconhecida pelo gabarito mas com pontuação
+  completa atribuída — requer verificação". Urgência 🟡.
 - `fill_in_blank_over_answered` (em `over_answered_flags`): pergunta de preenchimento de lacunas
   onde o aluno escreveu a resposta correcta mas com texto adicional (ex: deu o equivalente em
   inglês e português na mesma lacuna). O LearnWorlds exige correspondência exacta e rejeitou.
@@ -107,7 +112,8 @@ Avaliação da unidade curricular [label_display] no âmbito do programa [progra
 - O gabarito LW tem resposta correcta definida para [exam_config_exportable_count] perguntas.
 - O gabarito ID / Docente tem resposta correcta definida para [answer_key_matched_count] perguntas[, e tem N pergunta(s) não encontrada(s) — se answer_key_doc_not_found não for vazio].
 - Foram validadas [answer_key_matched_count] perguntas cruzando com o gabarito ID / Docente.
-- [Se flagged_rows não vazio:] [N] aluno(s) têm respostas correctas com 0 pontos atribuídos.
+- [Se existem linhas com flag="answer_accepted_but_zero" ou "answer_correct_per_doc_but_zero" em flagged_rows:] [N] aluno(s) têm respostas correctas com 0 pontos atribuídos.
+- [Se `not_accepted_but_full_flags` não vazio:] [N] resposta(s) não reconhecidas pelo gabarito mas com pontuação completa atribuída.
 
 NÃO incluir sub-listas de perguntas nesta secção — o detalhe fica nas secções abaixo.
 
@@ -155,9 +161,16 @@ Se correu:
    Urgência 🔴.
 
 3. Se `flagged_rows` contém flag="answer_accepted_but_zero" → secção "Resposta certa mas
-   pontuação zero": listar pergunta e alunos afectados.
+   pontuação zero": listar pergunta e alunos afectados. Só incluir alunos cujo flag seja
+   exactamente "answer_accepted_but_zero" — NÃO incluir outros flags.
 
-4. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
+4. Se `not_accepted_but_full_flags` não vazio → secção "Resposta não reconhecida pelo gabarito
+   mas com pontuação completa": explicar que o gabarito não reconhece a resposta como correcta
+   mas o LW atribuiu pontuação completa. Listar pergunta e alunos (nome + resposta + pontos).
+   Nota: estes alunos TÊM pontos — não é um problema de pontuação zero. Urgência 🟡 — pode
+   indicar resposta alternativa válida ou gabarito incompleto.
+
+5. Divergências entre gabarito LW e gabarito ID / Docente → listar pergunta, resposta LW vs
    resposta do gabarito ID / Docente.
 
 Se não houver nenhum: "Nenhum problema identificado."]
@@ -359,6 +372,21 @@ def _build_context(run_dir: Path) -> dict:
         if r.get("flag", "").strip() == "answer_correct_per_doc_but_zero"
     ]
 
+    # Wrong answer per gabarito but LW gave full points
+    not_accepted_but_full_flags = [
+        {
+            "question_number": r.get("question_number", "") or "(sem número no LW)",
+            "question_text": r.get("description", "")[:150],
+            "student_name": r.get("username", ""),
+            "submitted_answer": r.get("submitted_answer", ""),
+            "points": r.get("points", ""),
+            "max_points": r.get("max_points", ""),
+            "verifiable": r.get("verifiable", ""),
+        }
+        for r in report_rows
+        if r.get("flag", "").strip() == "answer_not_accepted_but_full"
+    ]
+
     # Over-answered fill-in-blank: student wrote correct answer with extra text; LW rejected
     over_answered_flags = [
         {
@@ -553,6 +581,7 @@ def _build_context(run_dir: Path) -> dict:
         "flagged_rows": flagged,
         "doc_override_flags": doc_override_flags,
         "over_answered_flags": over_answered_flags,
+        "not_accepted_but_full_flags": not_accepted_but_full_flags,
         "flag_counts": summary.get("flag_counts", {}),
         # Consistency (same answer, different points across students)
         "inconsistent_scoring_questions": summary.get("inconsistent_scoring_questions", 0),
