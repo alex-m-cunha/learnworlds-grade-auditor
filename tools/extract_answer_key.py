@@ -12,7 +12,7 @@ Usage:
         [--output "output/uc5/2026-06-19_123456/manual_answer_key.csv"]
 
 Output columns (manual_answer_key.csv):
-    question_number, blockType, question_text, lw_correct_answer, is_gap,
+    question_number, blockType, lw_question_text, question_text, lw_correct_answer, is_gap,
     doc_question_number, doc_correct_answer, answers_match, confidence,
     needs_review, notes, source_doc
 
@@ -37,7 +37,8 @@ EXCLUDE_TYPES = {"TP", "TFU"}
 ANSWER_KEY_COLUMNS = [
     "question_number",
     "blockType",
-    "question_text",
+    "lw_question_text",       # original LW description (reference)
+    "question_text",          # question text as it appears in the Word doc
     "lw_correct_answer",
     "is_gap",
     "doc_question_number",
@@ -117,19 +118,19 @@ document is preceded by a [QUESTION:N] marker — use that N directly (e.g. [QUE
 
 SYSTEM_PROMPT = """\
 You are an answer key extraction assistant. You will receive:
-1. A JSON list of questions from a Learning Management System (LMS), each with its answer options.
+1. A JSON list of LMS question texts — search references only, no answer options.
 2. The extracted text of a professor's Word document containing the answer key.
 
-Your task: for each LMS question, find the matching question in the document and identify the \
-correct answer text.
+Your task: for each LMS question, find the matching question in the Word document and return:
+- "doc_question_text": the question text EXACTLY AS IT APPEARS IN THE DOCUMENT (not the LMS version).
+- "doc_correct_answer": the correct answer EXACTLY AS IT APPEARS IN THE DOCUMENT.
 
 Rules:
 - Do NOT invent answers. Only extract answers that are explicitly marked in the document.
 - If you cannot find the question or no answer is clearly marked, set confidence to "unmatched".
-- Return the correct answer text as it appears in the LMS answer options (not as in the document), \
-so it can be matched against the LMS configuration. If the option text differs slightly between \
-the document and LMS, use the LMS option text.
-- Use question text as the primary match signal; question numbers as secondary (they may differ).
+- Return both the question text and the answer text verbatim from the document — do NOT normalise
+  or paraphrase to match any LMS wording. Minor whitespace cleanup is acceptable.
+- Match primarily by question text; use question numbers only as a secondary hint.
 
 Correct answer marking conventions (look for any of these):
 1. BOLD TEXT — the correct answer paragraph or run is wrapped in [BOLD]...[/BOLD]
@@ -144,8 +145,9 @@ Correct answer marking conventions (look for any of these):
 
 The document text uses [BOLD], [STYLE:...], [COLOR:#...], [TABLE] / [/TABLE] markers inserted \
 during extraction to preserve Word formatting that would otherwise be invisible in plain text.
-Each question in the document is preceded by a [QUESTION:N] marker indicating its sequential
-number. Use that N as the "doc_question_number" in your response.
+Some questions in the document are preceded by a [QUESTION:N] marker — when present, use that
+N as "doc_question_number". When absent (e.g. paragraph-style questions), infer the number from
+the question text prefix ("1.", "2.", etc.) or leave it empty if unclear.
 
 For True/False questions, identify which of Verdadeiro/Verdade/True or Falso/False is marked correct.
 For TMCMA (multiple correct answers), return all correct options separated by "; ".
@@ -157,13 +159,14 @@ minor uncertainty
 - "low": uncertain question match OR ambiguous/conflicting answer marking
 - "unmatched": question not found in document, or found but no answer is marked
 
-Return a single JSON object with a "results" key containing one entry per LMS question, in the \
-same order as the input:
+Return a single JSON object with a "results" key, one entry per input question. Each entry MUST
+echo the "qid" from the input so results can be matched back regardless of order:
 
 {"results": [
   {
-    "lw_question_number": 1,
+    "qid": "a",
     "doc_question_number": "3",
+    "doc_question_text": "Qual é a capital de Portugal?",
     "doc_correct_answer": "Lisboa",
     "confidence": "high",
     "notes": "Question matched by text; correct answer marked [BOLD] in document."
@@ -186,16 +189,35 @@ def _join_key(value: object) -> str:
     return re.sub(r"\W+", "", _norm(value), flags=re.UNICODE)
 
 
+_OPTION_PREFIX_RE = re.compile(r"^[a-zA-Z][.)]\s*", re.UNICODE)
+_TTF_NORMALISE = {
+    "verdadeira": "Verdadeiro", "verdade": "Verdadeiro", "true": "Verdadeiro",
+    "falsa": "Falso", "false": "Falso",
+}
+
+
+def _clean_doc_answer(answer: str, block_type: str) -> str:
+    """Strip option letter prefix and normalise TTF gender variants."""
+    cleaned = _OPTION_PREFIX_RE.sub("", answer.strip())
+    if (block_type or "").upper() == "TTF":
+        cleaned = _TTF_NORMALISE.get(cleaned.strip().lower(), cleaned)
+    return cleaned
+
+
 def _answers_match(lw: str, doc: str) -> str:
-    lw_k = _join_key(lw)
-    doc_k = _join_key(doc)
-    if not lw_k and not doc_k:
+    def _as_key_set(v: str) -> frozenset:
+        parts = [_join_key(p) for p in v.split(";")]
+        return frozenset(p for p in parts if p)
+
+    lw_s = _as_key_set(lw)
+    doc_s = _as_key_set(doc)
+    if not lw_s and not doc_s:
         return ""
-    if not doc_k:
+    if not doc_s:
         return "lw_only"
-    if not lw_k:
+    if not lw_s:
         return "doc_only"
-    return "yes" if lw_k == doc_k else "no"
+    return "yes" if lw_s == doc_s else "no"
 
 
 # ---------------------------------------------------------------------------
@@ -490,12 +512,28 @@ def extract_doc_text(path: Path) -> str:
                 if q_num is None:
                     q_num = str(numpr_counters[numpr])
 
-            # Priority 3: fallback — sequential table position
-            if q_num is None:
-                q_num = str(tbl_n)
+            # Determine if this table looks like a question table.
+            # Data tables (e.g. balance sheets, income statements) should NOT get
+            # a [QUESTION:N] marker — it misleads the LLM into treating them as
+            # questions and confuses matching for questions that follow as paragraphs.
+            _QUESTION_TABLE_KEYWORDS = (
+                "pergunta", "enunciado", "par ", "par\t", "opção", "opcao",
+                "resposta", "question", "statement",
+            )
+            first_cell_text = inner[0].lower() if inner else ""
+            is_question_table = (
+                q_num is not None  # has explicit number or list numbering
+                or any(kw in first_cell_text for kw in _QUESTION_TABLE_KEYWORDS)
+            )
 
-            # [QUESTION:N] lets the LLM read the question number directly
-            sections.append(f"[QUESTION:{q_num}]\n[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
+            # [QUESTION:N] lets the LLM read the question number directly;
+            # only emit it for actual question tables.
+            if is_question_table:
+                if q_num is None:
+                    q_num = str(tbl_n)
+                sections.append(f"[QUESTION:{q_num}]\n[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
+            else:
+                sections.append(f"[TABLE]\n" + "\n".join(inner) + "\n[/TABLE]")
 
     return "\n".join(sections)
 
@@ -504,33 +542,41 @@ def extract_doc_text(path: Path) -> str:
 # OpenAI call
 # ---------------------------------------------------------------------------
 
+# Alphabetic batch IDs — single letters a–z then aa, ab, … (never look like question numbers)
+def _batch_id(i: int) -> str:
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    if i < 26:
+        return letters[i]
+    return letters[i // 26 - 1] + letters[i % 26]
+
+
 def _build_questions_payload(rows: list[dict]) -> list[dict]:
-    payload = []
-    for row in rows:
-        options_raw = row.get("options_raw") or ""
-        try:
-            options = json.loads(options_raw)
-            if not isinstance(options, list):
-                options = [options_raw] if options_raw else []
-        except (json.JSONDecodeError, TypeError):
-            options = [options_raw] if options_raw else []
-
-        lw_answer = _parse_json_or_str(row.get("configured_accepted_answers_raw") or "")
-
-        payload.append({
-            "question_number": row.get("question_number", ""),
+    """Build LLM payload. Each question gets an opaque alphabetic 'qid' (never a number)
+    so the LLM can echo it back for stable mapping without anchoring on question numbers."""
+    return [
+        {
+            "qid": _batch_id(i),
             "blockType": row.get("blockType", ""),
             "question_text": row.get("description", ""),
-            "options": [str(o) for o in options if o is not None],
-            "lw_correct_answer": lw_answer,
-        })
-    return payload
+            "_lw_question_number": row.get("question_number", ""),  # internal only, stripped below
+        }
+        for i, row in enumerate(rows)
+    ]
 
 
-def call_openai(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+_QUESTION_BATCH_SIZE = 15  # questions per LLM call to avoid context overflow
+
+
+def _call_openai_batch(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+    """Single LLM call for one batch of questions against one doc."""
+    # Strip internal fields before sending — only blockType and question_text go to the LLM.
+    llm_questions = [
+        {k: v for k, v in q.items() if not k.startswith("_")}
+        for q in questions
+    ]
     user_msg = (
-        "LMS questions:\n"
-        + json.dumps(questions, ensure_ascii=False, indent=2)
+        "LMS question texts (search references only — no answer options):\n"
+        + json.dumps(llm_questions, ensure_ascii=False, indent=2)
         + "\n\nDocument text:\n"
         + doc_text
     )
@@ -558,6 +604,24 @@ def call_openai(client, model: str, questions: list[dict], doc_text: str) -> lis
         f"Unexpected LLM response structure — got keys: {list(parsed.keys())}.\n"
         f"Full response: {content[:500]}"
     )
+
+
+def call_openai(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+    """Call LLM in batches of _QUESTION_BATCH_SIZE to avoid context overflow."""
+    all_results: list[dict] = []
+    for i in range(0, len(questions), _QUESTION_BATCH_SIZE):
+        batch = questions[i : i + _QUESTION_BATCH_SIZE]
+        batch_num = i // _QUESTION_BATCH_SIZE + 1
+        total_batches = (len(questions) + _QUESTION_BATCH_SIZE - 1) // _QUESTION_BATCH_SIZE
+        if total_batches > 1:
+            print(f"    batch {batch_num}/{total_batches} ({len(batch)} questions)...")
+        batch_results = _call_openai_batch(client, model, batch, doc_text)
+        # Map by qid — stable regardless of the order the LLM returns results.
+        qid_to_qn = {q["qid"]: q["_lw_question_number"] for q in batch}
+        for item in batch_results:
+            item["lw_question_number"] = qid_to_qn.get(item.get("qid", ""), "")
+        all_results.extend(batch_results)
+    return all_results
 
 
 # ---------------------------------------------------------------------------
@@ -753,6 +817,7 @@ def run(
         for item in llm_results:
             qn = str(item.get("lw_question_number", ""))
             conf = item.get("confidence", "unmatched")
+
             prev = best.get(qn)
             if prev is None or CONFIDENCE_RANK.get(conf, 0) > CONFIDENCE_RANK.get(
                 prev.get("confidence", "unmatched"), 0
@@ -766,8 +831,15 @@ def run(
         is_gap = not lw_answer.strip()
 
         match_data = best.get(qn, {})
-        doc_answer = str(match_data.get("doc_correct_answer") or "")
+        doc_answer = _clean_doc_answer(
+            str(match_data.get("doc_correct_answer") or ""),
+            row.get("blockType", ""),
+        )
         confidence = match_data.get("confidence", "unmatched")
+
+        lw_desc = row.get("description", "")
+        # Use Word doc question text when LLM found the question; fall back to LW description.
+        doc_question_text = str(match_data.get("doc_question_text") or "") or lw_desc
 
         am = _answers_match(lw_answer, doc_answer)
         needs_review = confidence in ("low", "unmatched") or am == "no"
@@ -775,7 +847,8 @@ def run(
         output_rows.append({
             "question_number": qn,
             "blockType": row.get("blockType", ""),
-            "question_text": row.get("description", ""),
+            "lw_question_text": lw_desc,
+            "question_text": doc_question_text,
             "lw_correct_answer": lw_answer,
             "is_gap": "true" if is_gap else "false",
             "doc_question_number": str(match_data.get("doc_question_number") or ""),
