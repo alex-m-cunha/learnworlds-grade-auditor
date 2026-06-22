@@ -108,7 +108,7 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
         _row("Sem chave de resposta (`no_answer_key`)", ver.get("no_answer_key", 0)),
         _row("Multi-resposta ambíguo (`unverifiable_mcma`)", ver.get("unverifiable_mcma", 0)),
         _row("Verificado por inferência (`inferred`)", ver.get("inferred", 0)),
-        _row("Inferência com baixa confiança (`inferred_low_confidence`)", ver.get("inferred_low_confidence", 0)),
+        _row("Inferência sem resposta extraída (`inferred_unresolved`)", ver.get("inferred_unresolved", 0)),
         "",
         "---",
         "",
@@ -201,6 +201,10 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
             ),
             f"A necessitar revisão humana: **{needs}**"
             + (" ✅" if needs == 0 else ""),
+            (
+                f"Perguntas do Word doc sem match no LW (texto divergente): **{ak.get('no_lw_match_count', 0)}**"
+                + (" ✅" if ak.get("no_lw_match_count", 0) == 0 else " ⚠️ — verificar manualmente")
+            ),
             "",
             "---",
             "",
@@ -222,7 +226,8 @@ def _build_summary_md(summary: dict, activity_name: str) -> str:
             _row("Baixa (`low`)", inf_conf.get("low", 0)),
             _row("Sem match (`unmatched`)", inf_conf.get("unmatched", 0)),
             "",
-            f"Com confiança suficiente para reconciliação: **{inf.get('matched_count', 0)}**",
+            f"Verificadas (resposta extraída e validada pelo utilizador): **{inf.get('matched_count', 0)}**",
+            f"Sem resposta extraída (`inferred_unresolved`): **{inf.get('unresolved_count', 0)}**",
             "",
             "---",
             "",
@@ -367,6 +372,14 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
     cfg_index = build_merged_index(exam_config, ak_rows) if ak_rows else build_config_index(exam_config)
     inferred_index = build_inferred_index(inferred_rows) if inferred_rows else {}
 
+    # Detect Word doc questions that couldn't be matched to any LW question by text.
+    ak_no_lw_match_count = 0
+    if ak_rows:
+        ak_no_lw_match_count = sum(
+            1 for row in ak_rows
+            if join_key(row.get("question_text", "")) not in cfg_index
+        )
+
     # Optional official grades from course_grades, keyed by (assessment_id, user_id).
     grade_override = {}
     if grades_csv:
@@ -389,6 +402,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         bid = r.get("blockId"); desc = r.get("description")
 
         cfg = cfg_index.get(join_key(desc))
+        inferred_entry = None
         if cfg is None and inferred_index:
             inferred_entry = inferred_index.get(join_key(desc))
             chk = (
@@ -406,7 +420,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "assessment_id": aid, "user_id": uid,
             "username": r.get("username"), "email": r.get("email"),
             "blockId": bid, "blockType": bt,
-            "question_number": (cfg or {}).get("question_number", ""),
+            "question_number": (cfg or {}).get("question_number", "") or (inferred_entry or {}).get("doc_question_number", ""),
             "description": desc, "submitted_answer": ans,
             "configured_correct_answer": chk["configured_correct"],
             "configured_accepted_answers": chk["accepted"],
@@ -430,7 +444,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         consistency[(aid, bid)][norm(ans)].add(str(pts))
 
         # manual review queue (questions without a usable key or with low-confidence inference)
-        if chk["verifiable"] in ("no_config_match", "no_answer_key", "unverifiable_mcma", "inferred_low_confidence"):
+        if chk["verifiable"] in ("no_config_match", "no_answer_key", "unverifiable_mcma", "inferred_unresolved"):
             q = queue[(aid, bid)]
             q["blockType"] = bt; q["description"] = desc
             q["question_number"] = (cfg or {}).get("question_number", "")
@@ -486,8 +500,8 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
                                "(e.g. 'match' type is not exported). Review parametrization once.",
             "no_answer_key": "Config row exists but has no configured correct answer. Review once.",
             "unverifiable_mcma": "Multi-select answer could not be reconstructed unambiguously. Review once.",
-            "inferred_low_confidence": "Inferred answer found in Word doc but with low/unmatched confidence — "
-                                       "manual verification required.",
+            "inferred_unresolved": "Pergunta inferida do Word doc mas sem resposta extraída pelo LLM — "
+                                   "verificação manual necessária.",
         }
         queue_rows.append({
             "assessment_id": aid, "blockId": bid,
@@ -507,18 +521,23 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         inf_conf = _Counter(r.get("confidence", "") for r in inferred_rows)
         inf_matched = sum(
             1 for v in inferred_index.values()
-            if v.get("confidence") in ("high", "medium")
+            if v.get("inferred_correct_answer") and v.get("confidence") != "unmatched"
+        )
+        inf_unresolved = sum(
+            1 for v in inferred_index.values()
+            if not v.get("inferred_correct_answer") or v.get("confidence") == "unmatched"
         )
         answer_key_summary["inferred"] = {
             "questions": len(inferred_rows),
             "confidence_breakdown": dict(inf_conf),
             "matched_count": inf_matched,
+            "unresolved_count": inf_unresolved,
         }
         print(
             f"Inferidas: {len(inferred_rows)} pergunta(s), "
             f"high={inf_conf.get('high', 0)}, "
             f"medium={inf_conf.get('medium', 0)}, "
-            f"matched={inf_matched}."
+            f"verificadas={inf_matched}, sem_resposta={inf_unresolved}."
         )
     if ak_rows:
         from collections import Counter
@@ -534,13 +553,15 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "needs_review": sum(1 for r in ak_rows if r.get("needs_review") == "true"),
             "source_docs": sources,
             "doc_override_count": doc_override_count,
+            "no_lw_match_count": ak_no_lw_match_count,
         }
         print(
             f"Answer key: {len(ak_rows)} question(s), "
             f"high={conf_counts.get('high', 0)}, "
             f"unmatched={conf_counts.get('unmatched', 0)}, "
             f"discrepancies={match_counts.get('no', 0)}, "
-            f"doc_overrides={doc_override_count}."
+            f"doc_overrides={doc_override_count}, "
+            f"no_lw_match={ak_no_lw_match_count}."
         )
 
     # ---- write outputs ----
