@@ -93,8 +93,12 @@ def _bt_label(bt: str) -> str:
 # ---------------------------------------------------------------------------
 # Flag → human-readable situation + priority
 # ---------------------------------------------------------------------------
-def _situacao(row: dict) -> tuple[str, str]:
-    """Return (priority_emoji, situacao_text)."""
+def _situacao(row: dict, inferred_confidence: str = "") -> tuple[str, str]:
+    """Return (priority_emoji, situacao_text).
+
+    inferred_confidence: confidence level looked up from inferred_answer_key.csv
+    for rows where verifiable=="inferred". High confidence rows are not highlighted.
+    """
     flag = (row.get("flag") or "").strip()
     verifiable = (row.get("verifiable") or "").strip()
     is_correct = (row.get("is_correct") or "").strip().lower()
@@ -107,11 +111,13 @@ def _situacao(row: dict) -> tuple[str, str]:
         return "🔴", "Resposta correcta (gabarito docente) — 0 pontos"
     if flag == "fill_in_blank_over_answered":
         return "🔴", "Texto a mais — verificar se merece crédito"
-    if verifiable == "inferred" and is_correct == "true":
-        return "🟡", "Inferida — parecer correcto (confirmar)"
-    if verifiable == "inferred" and is_correct == "false":
-        return "🟡", "Inferida — parecer incorrecto (confirmar)"
     if verifiable == "inferred":
+        if inferred_confidence == "high":
+            return "", ""  # high confidence — no highlight needed
+        if is_correct == "true":
+            return "🟡", "Inferida — parecer correcto (confirmar)"
+        if is_correct == "false":
+            return "🟡", "Inferida — parecer incorrecto (confirmar)"
         return "🟡", "Inferida — confirmar"
     if verifiable == "inferred_low_confidence":
         return "🟡", "Inferida — baixa confiança (rever)"
@@ -149,6 +155,30 @@ def generate(run_dir: Path, output_path: Path) -> None:
         print("ERRO: reconciliation_report.csv não encontrado ou vazio.", file=sys.stderr)
         sys.exit(1)
 
+    # Build inferred confidence lookup: description_key → confidence
+    # Used to suppress yellow highlight for high-confidence inferred rows.
+    _inferred_conf: dict[str, str] = {}
+    _inferred_csv = run_dir / "answer_key" / "inferred_answer_key.csv"
+    if _inferred_csv.exists():
+        for r in _read_csv(_inferred_csv):
+            _key = (r.get("question_text") or "").strip().lower()
+            if _key:
+                _inferred_conf[_key] = r.get("confidence", "")
+
+    def _inferred_confidence_for(row: dict) -> str:
+        desc = (row.get("description") or "").strip().lower()
+        return _inferred_conf.get(desc, "")
+
+    # First pass: identify question descriptions that have at least one 🔴 row.
+    # All other rows for these questions will be highlighted yellow.
+    flagged_descriptions: set[str] = set()
+    for row in report_rows:
+        pri, _ = _situacao(row, _inferred_confidence_for(row))
+        if pri == "🔴":
+            desc = (row.get("description") or "").strip()
+            if desc:
+                flagged_descriptions.add(desc)
+
     # Derive label/program from path
     parts = run_dir.parts
     try:
@@ -162,10 +192,17 @@ def generate(run_dir: Path, output_path: Path) -> None:
     for g in grade_rows:
         grade_index[g["email"]] = g
 
-    # Sort: priority rows first (flagged + inferred), then by student name + question number
+    # Sort: red rows first, then yellow (inferred medium/low + question-flagged), then normal
     def _sort_key(r: dict) -> tuple:
-        pri, _ = _situacao(r)
-        pri_order = 0 if pri == "🔴" else (1 if pri == "🟡" else 2)
+        pri, _ = _situacao(r, _inferred_confidence_for(r))
+        desc = (r.get("description") or "").strip()
+        is_flagged_q = desc in flagged_descriptions
+        if pri == "🔴":
+            pri_order = 0
+        elif pri == "🟡" or is_flagged_q:
+            pri_order = 1
+        else:
+            pri_order = 2
         try:
             qn = int(r.get("question_number") or 999)
         except ValueError:
@@ -346,12 +383,13 @@ def generate(run_dir: Path, output_path: Path) -> None:
     # -----------------------------------------------------------------------
     for ri, row in enumerate(report_rows):
         dr = DETAIL_DATA_START + ri
-        priority, situacao = _situacao(row)
+        priority, situacao = _situacao(row, _inferred_confidence_for(row))
 
         pts_orig = _pts(row.get("points"))
         pts_max  = _pts(row.get("max_points"))
 
         qn = row.get("question_number") or "—"
+        desc = (row.get("description") or "").strip()
         cells_data = [
             priority,
             situacao,
@@ -359,7 +397,7 @@ def generate(run_dir: Path, output_path: Path) -> None:
             row.get("email") or "",
             qn,
             _bt_label(row.get("blockType") or ""),
-            (row.get("description") or "")[:300],
+            desc[:300],
             (row.get("submitted_answer") or "")[:500],
             pts_orig,   # Pontos Originais
             pts_orig,   # Pontos Corrigidos (pre-filled = original)
@@ -367,13 +405,28 @@ def generate(run_dir: Path, output_path: Path) -> None:
             "",         # Notas Revisor
         ]
 
-        # Row background based on priority
-        if priority == "🔴":
-            row_fill = _fill(CLR_RED_ROW)
-        elif priority == "🟡":
+        # Colour logic:
+        # • ALL rows of a question that has any 🔴 case → yellow row background
+        # • Within those rows, the 🔴 case itself gets specific cells in red:
+        #     col 1 (Pri.), col 2 (Situação), col 8 (Resposta), col 9 (Pontos Originais)
+        # • Medium/low inferred rows not part of a flagged question → yellow row
+        # • Everything else → subtle alternating grey
+        is_flagged_question = desc in flagged_descriptions
+        is_red_case = priority == "🔴"
+        flag = (row.get("flag") or "").strip()
+        zero_score_flag = flag in ("answer_accepted_but_zero", "answer_correct_per_doc_but_zero")
+
+        if is_flagged_question or priority == "🟡":
             row_fill = _fill(CLR_YLW_ROW)
         else:
             row_fill = _fill(CLR_ALT_ROW) if ri % 2 == 0 else None
+
+        # Columns to paint red for the specific detected case
+        red_cells: set[int] = set()
+        if is_red_case:
+            red_cells = {1, 2, 8}          # Pri., Situação, Resposta
+            if zero_score_flag:
+                red_cells.add(9)           # also Pontos Originais for zero-score issues
 
         for ci, val in enumerate(cells_data, start=1):
             col_letter = get_column_letter(ci)
@@ -390,8 +443,11 @@ def generate(run_dir: Path, output_path: Path) -> None:
             else:
                 cell.alignment = _align()
 
-            # Cell-level fills override row fill for special columns
-            if ci == 9:   # Pontos Originais — read-only
+            # Fill priority: red cell > special column > row fill
+            if ci in red_cells:
+                cell.fill = _fill(CLR_RED_ROW)
+                cell.font = _font(bold=True, size=9)
+            elif ci == 9:   # Pontos Originais — read-only
                 cell.fill = _fill(CLR_ORIG_BG)
                 cell.number_format = "0.00"
             elif ci == 10:  # Pontos Corrigidos — editable
@@ -424,9 +480,23 @@ def generate(run_dir: Path, output_path: Path) -> None:
     )
 
     # -----------------------------------------------------------------------
-    # Auto-filter on detail table
+    # Auto-filter on detail table — pre-applied to show only 🔴 (red-cell) rows
     # -----------------------------------------------------------------------
+    from openpyxl.worksheet.filters import FilterColumn, Filters
+
     ws.auto_filter.ref = f"A{DETAIL_HEADER_ROW}:{get_column_letter(len(DETAIL_COLS))}{DETAIL_DATA_END}"
+
+    # Set filter definition on column A (colId=0 = first column of the filter range)
+    fc = FilterColumn(colId=0)
+    fc.filters = Filters(filter=["🔴"])
+    ws.auto_filter.filterColumn = [fc]
+
+    # Hide rows that don't match the filter so Excel shows the view immediately on open
+    for ri, row in enumerate(report_rows):
+        dr = DETAIL_DATA_START + ri
+        pri, _ = _situacao(row, _inferred_confidence_for(row))
+        if pri != "🔴":
+            ws.row_dimensions[dr].hidden = True
 
     # -----------------------------------------------------------------------
     # Save

@@ -85,6 +85,31 @@ def _set_run_meta_key(run_dir: Path, key: str, value: str) -> None:
     meta_path.write_text(new_text, encoding="utf-8")
 
 
+def _inferred_needs_review(run_dir: Path) -> bool:
+    """True if inferred_answer_key.csv has non-high-confidence rows and INFERRED_REVIEWED != true.
+
+    High-confidence rows are auto-approved — only medium/low/unmatched require the human gate.
+    """
+    inferred_csv = run_dir / "answer_key" / "inferred_answer_key.csv"
+    if not inferred_csv.exists():
+        return False
+    meta_cfg = run_dir / "run_meta.cfg"
+    if meta_cfg.exists():
+        for line in meta_cfg.read_text(encoding="utf-8").splitlines():
+            if line.startswith("INFERRED_REVIEWED="):
+                return line.partition("=")[2].strip().lower() != "true"
+    # Not yet reviewed — check if any row needs human eye (non-high confidence)
+    try:
+        with open(inferred_csv, newline="", encoding="utf-8-sig") as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                if row.get("confidence", "").lower() != "high":
+                    return True  # medium/low/unmatched — human gate required
+        return False  # all high confidence — auto-approve
+    except Exception:
+        return True  # be safe
+
+
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
@@ -228,6 +253,15 @@ class NovaRunTab(ttk.Frame):
             state="disabled",
         )
         self._btn_reconcile.pack(fill="x", pady=3)
+
+        self._lbl_inferred_warn = ttk.Label(
+            steps,
+            text="⚠️ Valida as perguntas inferidas na tab Revisão Manual antes de reconciliar",
+            foreground="#cc7700",
+            font=("TkDefaultFont", 9),
+            wraplength=380,
+        )
+        # Only shown when inferred questions require review
 
         self._btn_interpret = ttk.Button(
             steps,
@@ -407,8 +441,19 @@ class NovaRunTab(ttk.Frame):
                 self._set_status("Erro no gabarito Word.")
                 return
             _log_write(self._log, "\nPasso 2 concluído.\n")
-            self._btn_reconcile.configure(state="normal")
-            self._set_status("Passo 2 OK — pronto para reconciliar.")
+            if _inferred_needs_review(self._run_dir):
+                self._lbl_inferred_warn.pack(fill="x", pady=(0, 4))
+                self._set_status("Passo 2 OK — revê as inferidas (medium/low) antes de reconciliar.")
+                if callable(getattr(self, "_on_revision_ready", None)):
+                    self._on_revision_ready(self._run_dir)
+            else:
+                # Auto-approve: no inferred questions, or all are high confidence
+                inferred_csv = self._run_dir / "answer_key" / "inferred_answer_key.csv"
+                if inferred_csv.exists():
+                    _set_run_meta_key(self._run_dir, "INFERRED_REVIEWED", "true")
+                    _log_write(self._log, "Inferidas com confiança alta — aprovadas automaticamente.\n")
+                self._btn_reconcile.configure(state="normal")
+                self._set_status("Passo 2 OK — pronto para reconciliar.")
 
         _run_step(cmd, self._log, _after)
 
@@ -434,7 +479,7 @@ class NovaRunTab(ttk.Frame):
         def _after_review(rc: int) -> None:
             self._btn_interpret.configure(state="normal")
             self._set_status("Passo 3 OK — pronto para interpretar.")
-            if callable(getattr(self, "_on_revision_ready", None)):
+            if callable(getattr(self, "_on_revision_ready", None)) and _inferred_needs_review(self._run_dir):
                 self._on_revision_ready(self._run_dir)
 
         def _after(rc: int) -> None:
@@ -467,7 +512,7 @@ class NovaRunTab(ttk.Frame):
         def _after(rc: int) -> None:
             self._btn_reset.configure(state="normal")
             if rc != 0:
-                _log_write(self._log, "\nERRO na interpretação (OPENAI_API_KEY ausente?).\n")
+                _log_write(self._log, "\nERRO na interpretação — ver detalhes acima.\n")
                 self._btn_interpret.configure(state="normal")
                 self._set_status("Erro na interpretação.")
                 return
@@ -566,7 +611,7 @@ class AtualizarRunTab(ttk.Frame):
         self._btn_interpret.configure(state="normal")
         self._btn_finder.configure(state="normal")
         self._status_var.set(f"Run seleccionada: {self._run_dir.name}")
-        if callable(getattr(self, "_on_revision_ready", None)):
+        if callable(getattr(self, "_on_revision_ready", None)) and _inferred_needs_review(self._run_dir):
             self._on_revision_ready(self._run_dir)
 
     def _set_status(self, msg: str) -> None:
@@ -1006,6 +1051,10 @@ class App(tk.Tk):
         if self._recorrer._run_dir == run_dir:
             self._recorrer._inferred_reviewed.set(True)
             self._recorrer._chk_reviewed.configure(state="disabled")
+        if self._nova_run._run_dir == run_dir:
+            self._nova_run._lbl_inferred_warn.pack_forget()
+            self._nova_run._btn_reconcile.configure(state="normal")
+            self._nova_run._set_status("Revisão confirmada — pronto para reconciliar.")
 
     def _check_deps(self) -> None:
         try:
