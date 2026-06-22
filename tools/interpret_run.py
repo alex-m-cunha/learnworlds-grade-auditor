@@ -158,9 +158,19 @@ Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_q
 
 ## ⚠️ Problemas a corrigir
 
-[OBRIGATÓRIO: verifica individualmente cada uma das 5 condições abaixo. "Nenhum problema
-identificado." só pode aparecer se AS 5 listas estiverem TODAS vazias. Cada condição é
-independente — não inferir a partir de outras. Usar `problems_checklist` no contexto como guia.]
+[OBRIGATÓRIO: verifica individualmente cada uma das 5 condições abaixo, usando `problems_checklist`
+no contexto como guia. Cada condição é independente — não inferir a partir de outras.
+
+REGRA DE OUTPUT (importante):
+- Mostra APENAS as condições cuja lista NÃO está vazia. Omite por completo — sem cabeçalho, sem
+  qualquer texto — todas as condições vazias. NUNCA escrevas "Nenhum problema identificado" por
+  baixo de uma condição individual. A frase "Nenhum problema identificado." só pode aparecer UMA
+  vez, sozinha, e apenas quando AS 5 listas estiverem TODAS vazias.
+- Os números 1–5 abaixo são guia interno — NÃO os uses como numeração no relatório. Apresenta cada
+  problema encontrado com o seu próprio título em negrito (o título indicado a seguir à seta "→").
+- NÃO copies para o relatório as frases de instrução (ex.: "Listar pergunta e alunos (nome + resposta
+  + pontos)"). Escreve só o título, uma frase de contexto, e a lista de perguntas/alunos com os dados
+  reais. O emoji de urgência (🔴/🟡) vai no fim do título.]
 
 1. Se `answer_key_real_discrepancies` não vazio → "Divergência detectada entre gabaritos —
    possível parametrização errada no LearnWorlds": explicar que o gabarito ID / Docente indica
@@ -268,21 +278,48 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def _qkey(s: str) -> str:
+    """Text join key (mirrors reconcile's join_key) for cross-source matching."""
+    import re, unicodedata
+    s = unicodedata.normalize("NFKD", (s or "").lower())
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
 def _build_question_index(
     config_rows: list[dict],
     ak_rows: list[dict],
+    inferred_rows: list[dict],
     report_rows: list[dict],
 ) -> dict[str, dict]:
-    """Build a per-question cross-reference from all data sources."""
+    """Build a per-question cross-reference from all data sources.
+
+    Covers the FULL exam — verifiable questions (from exam_config) AND inferred
+    questions (fill-in-blank / match, from inferred_answer_key) — in one table,
+    so the index spans the whole 1..N live sequence with no gaps.
+
+    Sources are joined by question TEXT, not by question_number: the
+    reconciliation_report numbers questions by live exam order (1..N, counting
+    inferred types too), while exam_config / manual_answer_key carry the
+    answer-key-export position (which omits inferred questions). Joining by
+    number would misalign them. The canonical live-order number from the report
+    is used for display so the index matches the reconciliation report.
+    """
+    # Canonical live-order question_number per question text, from the report.
+    canon_qn: dict[str, str] = {}
+    for r in report_rows:
+        k = _qkey(r.get("description", ""))
+        if k and k not in canon_qn:
+            canon_qn[k] = r.get("question_number", "").strip()
+
     questions: dict[str, dict] = {}
 
     # Seed from exam_config (authoritative for question text and LW answer)
     for r in config_rows:
-        qn = r.get("question_number", "").strip()
-        if not qn:
+        k = _qkey(r.get("description", ""))
+        if not k:
             continue
-        questions[qn] = {
-            "question_number": qn,
+        questions[k] = {
+            "question_number": canon_qn.get(k, r.get("question_number", "").strip()),
             "blockType": r.get("blockType", ""),
             "question_text": r.get("description", "")[:200],
             "lw_correct_answer": r.get("configured_accepted_answers_raw", "")[:120],
@@ -295,34 +332,55 @@ def _build_question_index(
             "flagged_student_names": "",
         }
 
-    # Enrich from answer_key (docente cross-check)
-    for r in ak_rows:
-        qn = r.get("question_number", "").strip()
-        if qn in questions:
-            questions[qn]["doc_correct_answer"] = r.get("doc_correct_answer", "")
-            questions[qn]["answers_match"] = r.get("answers_match", "")
-            questions[qn]["doc_confidence"] = r.get("confidence", "")
-            questions[qn]["needs_review"] = r.get("needs_review", "")
+    # Seed inferred questions (not in LW export — fill-in-blank / match). They have
+    # no LW answer key; their answer comes only from the Word doc. Including them
+    # here fills the gaps the exam_config leaves (e.g. live positions 5, 12, 15).
+    for r in inferred_rows:
+        k = _qkey(r.get("question_text", ""))
+        if not k or k in questions:
+            continue
+        questions[k] = {
+            "question_number": canon_qn.get(k, ""),
+            "blockType": r.get("blockType", ""),
+            "question_text": r.get("question_text", "")[:200],
+            "lw_correct_answer": "",  # not configured in LW (inferred type)
+            "doc_correct_answer": r.get("doc_correct_answer", ""),
+            "answers_match": "inferida",
+            "doc_confidence": r.get("confidence", ""),
+            "needs_review": "",
+            "flag": "",
+            "n_flagged_students": 0,
+            "flagged_student_names": "",
+        }
 
-    # Enrich from reconciliation_report (flags + affected students)
+    # Enrich from answer_key (docente cross-check), matched by question text
+    for r in ak_rows:
+        k = _qkey(r.get("lw_question_text", "") or r.get("question_text", ""))
+        if k in questions:
+            questions[k]["doc_correct_answer"] = r.get("doc_correct_answer", "")
+            questions[k]["answers_match"] = r.get("answers_match", "")
+            questions[k]["doc_confidence"] = r.get("confidence", "")
+            questions[k]["needs_review"] = r.get("needs_review", "")
+
+    # Enrich from reconciliation_report (flags + affected students), by text
     flag_data: dict[str, dict] = {}
     for r in report_rows:
-        qn = r.get("question_number", "").strip()
+        k = _qkey(r.get("description", ""))
         flag = r.get("flag", "").strip()
-        if not qn or not flag:
+        if not k or not flag:
             continue
-        if qn not in flag_data:
-            flag_data[qn] = {"flag": flag, "students": []}
+        if k not in flag_data:
+            flag_data[k] = {"flag": flag, "students": []}
         name = r.get("username", r.get("email", ""))
         answer = r.get("submitted_answer", "")
         points = r.get("points", "")
-        flag_data[qn]["students"].append(f"{name} (resp: {answer!r}, pts: {points})")
+        flag_data[k]["students"].append(f"{name} (resp: {answer!r}, pts: {points})")
 
-    for qn, data in flag_data.items():
-        if qn in questions:
-            questions[qn]["flag"] = data["flag"]
-            questions[qn]["n_flagged_students"] = len(data["students"])
-            questions[qn]["flagged_student_names"] = "; ".join(data["students"])
+    for k, data in flag_data.items():
+        if k in questions:
+            questions[k]["flag"] = data["flag"]
+            questions[k]["n_flagged_students"] = len(data["students"])
+            questions[k]["flagged_student_names"] = "; ".join(data["students"])
 
     return questions
 
@@ -351,6 +409,17 @@ def _build_context(run_dir: Path) -> dict:
     queue_rows = _read_csv(run_dir / "reconcile" / "manual_review_queue" / "manual_review_queue.csv")
     grade_rows = _read_csv(run_dir / "reconcile" / "grade_reconciliation" / "grade_reconciliation.csv")
 
+    # Canonical live-order question number per question text (from the report — the
+    # only source covering verifiable AND inferred questions in true exam order).
+    # Every LLM-facing field is numbered through this map so a question never shows
+    # two different numbers (the XLSX answer-key position and the Word-doc number are
+    # provenance-only and would otherwise leak into the report and confuse the model).
+    canon_qn: dict[str, str] = {}
+    for r in report_rows:
+        k = _qkey(r.get("description", ""))
+        if k and k not in canon_qn:
+            canon_qn[k] = r.get("question_number", "").strip()
+
     # Active questions: named (from reconciliation_report) + unnamed (no question_number in LW)
     active_qns = sorted(
         {r.get("question_number", "").strip() for r in report_rows if r.get("question_number", "").strip()},
@@ -366,7 +435,7 @@ def _build_context(run_dir: Path) -> dict:
     active_count = len(active_qns) + unnamed_count
 
     # Build cross-referenced question index
-    questions_index = _build_question_index(config_rows, ak_rows, report_rows)
+    questions_index = _build_question_index(config_rows, ak_rows, inferred_rows, report_rows)
 
     # Write question_index.csv
     _write_question_index(run_dir, questions_index)
@@ -483,10 +552,18 @@ def _build_context(run_dir: Path) -> dict:
     for r in ak_rows:
         if r.get("needs_review", "").lower() != "true":
             continue
+        _ak_qn = canon_qn.get(
+            _qkey(r.get("lw_question_text", "") or r.get("question_text", "")), ""
+        )
+        # Identify the question by its LW text — that's what the canonical number
+        # refers to. The doc question_text can be a false extraction match (different
+        # question with overlapping words), so showing it alongside the LW number
+        # would point the reader at two different questions.
+        _ak_text = r.get("lw_question_text", "") or r.get("question_text", "")
         if r.get("confidence", "") == "unmatched":
             ak_doc_not_found.append({
-                "question_number": r.get("question_number", ""),
-                "question_text": r.get("question_text", "")[:120],
+                "question_number": _ak_qn,
+                "question_text": _ak_text[:120],
                 "lw_correct_answer": r.get("lw_correct_answer", ""),
                 "note": "Pergunta não encontrada no documento Word pelo LLM — gabarito LW correcto.",
                 "source_doc": r.get("source_doc", ""),
@@ -498,8 +575,8 @@ def _build_context(run_dir: Path) -> dict:
             if _doc_in_lw_variants(lw_ans, doc_ans):
                 continue
             ak_real_discrepancies.append({
-                "question_number": r.get("question_number", ""),
-                "question_text": r.get("question_text", "")[:200],
+                "question_number": _ak_qn,
+                "question_text": _ak_text[:200],
                 "lw_correct_answer": lw_ans[:80],
                 "doc_correct_answer": doc_ans[:80],
                 "answers_match": r.get("answers_match", ""),
@@ -574,6 +651,7 @@ def _build_context(run_dir: Path) -> dict:
     inferred_questions_detail = [
         {
             "blockType": r.get("blockType", ""),
+            "question_number": canon_qn.get(_qkey(r.get("question_text", "")), ""),
             "doc_question_number": r.get("doc_question_number", ""),
             "question_text": r.get("question_text", "")[:200],
             "doc_correct_answer": r.get("doc_correct_answer", ""),
@@ -592,6 +670,7 @@ def _build_context(run_dir: Path) -> dict:
             if desc not in _seen_inferred:
                 _seen_inferred.add(desc)
                 inferred_reconciled_questions.append({
+                    "question_number": r.get("question_number", ""),
                     "question_text": desc[:150],
                     "blockType": r.get("blockType", ""),
                 })
