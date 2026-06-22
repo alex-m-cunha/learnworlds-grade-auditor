@@ -55,7 +55,9 @@ REGRAS GERAIS:
 - Usa sempre números arábicos (42, não "quarenta e dois"). Nunca mistures algarismos com
   palavras por extenso no mesmo contexto.
 - O programa deve aparecer sempre em maiúsculas (ex: pggf2 → PGGF2, mba3 → MBA3).
-- "correspondência exacta" = confidence high no gabarito ID/Docente. Não usar "alta".
+- Para o gabarito ID/Docente (manual_answer_key): confidence high = "correspondência exacta". Nunca usar "alta" para estas perguntas.
+- Para perguntas inferidas (inferred_answer_key): usar "confiança alta/média/baixa" conforme o nível. Nunca mencionar o tipo de pergunta (preenchimento de lacunas, correspondência, etc.) — apenas o nível de confiança.
+- Perguntas inferidas com confiança exacta ou alta NÃO requerem confirmação humana. Apenas média/baixa requerem.
 - Nunca escrever "documento Word" — usar sempre "gabarito ID / Docente".
 
 REGRAS SOBRE OS DADOS:
@@ -78,9 +80,10 @@ REGRAS SOBRE OS DADOS:
   penalizar respostas correctas. Listar com urgência 🔴.
 - `answer_key_doc_not_found`: pergunta presente no gabarito LW mas não encontrada no gabarito ID /
   Docente — sem validação cruzada para esta pergunta.
-- `inferred_questions_detail`: perguntas de preenchimento de lacunas ou correspondência cujo
-  gabarito NÃO existe no LW — foi inferido automaticamente a partir do gabarito ID / Docente e
-  USADO na reconciliação. Não é um gabarito oficial: requer confirmação humana.
+- `inferred_questions_detail`: perguntas cujo gabarito NÃO existe no LW — foi inferido automaticamente
+  a partir do gabarito ID / Docente e USADO na reconciliação. Usar `inferred_conf_breakdown` para
+  mostrar a distribuição de confiança. Só requerem confirmação humana as de confiança média ou baixa
+  (`inferred_conf_breakdown.medium > 0` ou `.low > 0`). As de confiança alta são consideradas validadas.
 - `unverifiable_questions`: perguntas SEM gabarito em QUALQUER fonte — não verificadas de todo.
 - Next steps: 🔴 urgente (impacta notas actuais), 🟡 médio (boas práticas),
   🔵 baixo (informativo/preventivo).
@@ -105,9 +108,9 @@ curricular [label_display] no âmbito do programa [program_display]."]
 
 - O teste contém um total de [active_questions_count] perguntas, detetadas nas submissões dos alunos.
 
-- O gabarito LearnWorlds tem resposta correcta definida para [exam_config_exportable_count] perguntas. O gabarito ID / Docente [se answer_key_ran: tem resposta correcta definida para [answer_key_matched_count + len(inferred_questions_detail)] perguntas — [answer_key_confidence_breakdown.high] com correspondência exacta[, se inferred: [N] inferidas automaticamente (preenchimento de lacunas / correspondência)][, se answer_key_doc_not_found: [N] não encontradas]][senão: não foi executado].
+- O gabarito LearnWorlds tem resposta correcta definida para [exam_config_exportable_count] perguntas. O gabarito ID / Docente [se answer_key_ran: tem resposta correcta definida para [answer_key_matched_count + len(inferred_questions_detail)] perguntas — [answer_key_confidence_breakdown.high] com correspondência exacta[, se inferred: [N] inferidas automaticamente (confiança: [breakdown de inferred_conf_breakdown, ex: "alta" se só high, ou "alta: X, média: Y" se misto)][, se answer_key_doc_not_found: [N] não encontradas]][senão: não foi executado].
 
-- Foram validadas [verifiable_count + inferred_rows_count] respostas cruzando com o gabarito ID / Docente[se inferred_rows_count > 0: , das quais [inferred_rows_count] com base em [len(inferred_questions_detail)] pergunta(s) inferida(s) automaticamente — a confirmação humana dessas inferências é necessária antes de qualquer decisão sobre notas].
+- Foram validadas [verifiable_count + inferred_rows_count] respostas cruzando com o gabarito ID / Docente[se inferred_rows_count > 0 E (inferred_conf_breakdown.medium > 0 OU inferred_conf_breakdown.low > 0): , das quais [inferred_rows_count] com base em [N] pergunta(s) inferida(s) com confiança média ou baixa — a confirmação humana dessas inferências é necessária antes de qualquer decisão sobre notas][se inferred_rows_count > 0 E só confiança alta: , das quais [inferred_rows_count] com base em [N] pergunta(s) inferida(s) com confiança alta].
 
 [Uma linha em branco antes de cada ocorrência. Só incluir os bullets abaixo se existirem dados:]
 
@@ -134,9 +137,9 @@ NÃO incluir sub-listas de perguntas nesta secção — o detalhe fica nas secç
 ### Gabarito ID / Docente (extracção automática)
 [Se não correu: "Não executado nesta corrida."]
 [Se correu — 1 linha de cobertura seguida de sub-bullets:]
-Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_questions_detail)] perguntas de preenchimento de lacunas / correspondência.
+Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_questions_detail)] inferidas.
 - [answer_key_matched_count] perguntas com correspondência exacta (confiança exacta).
-[Se inferred_questions_detail não vazio:] - [N] perguntas inferidas automaticamente[: listar confiança por nível se não for tudo "high"]; usadas na reconciliação mas requerem confirmação humana.
+[Se inferred_questions_detail não vazio:] - [N] pergunta(s) inferida(s) automaticamente (confiança: [breakdown de inferred_conf_breakdown])[se inferred_conf_breakdown.medium > 0 ou .low > 0: ; requerem confirmação humana][se só high: ; sem necessidade de confirmação humana].
 [Se answer_key_doc_not_found não vazio:] - [N] perguntas não encontradas no gabarito ID / Docente — sem validação cruzada para estas perguntas:
   [listar cada uma como "- Q[número]: [80 chars do enunciado]"]
 
@@ -162,8 +165,12 @@ independente — não inferir a partir de outras. Usar `problems_checklist` no c
 1. Se `answer_key_real_discrepancies` não vazio → "Divergência detectada entre gabaritos —
    possível parametrização errada no LearnWorlds": explicar que o gabarito ID / Docente indica
    uma resposta diferente da que está configurada no LearnWorlds. Isto pode significar que o LW
-   tem a opção errada configurada, penalizando respostas correctas. Listar pergunta (Q[número] +
-   enunciado) com resposta LW vs resposta do docente. Urgência 🔴.
+   tem a opção errada configurada, penalizando respostas correctas. Para cada entrada em
+   `answer_key_real_discrepancies`, escrever obrigatoriamente:
+   - **Q[question_number]**: "[question_text]"
+     - LW: [lw_correct_answer]
+     - Docente: [doc_correct_answer]
+   Urgência 🔴.
 
 2. Se `doc_override_flags` não vazio → "Erro de parametrização confirmado — resposta correcta
    rejeitada pelo LearnWorlds": o aluno respondeu conforme a intenção do docente mas levou 0
@@ -186,21 +193,17 @@ independente — não inferir a partir de outras. Usar `problems_checklist` no c
 
 ---
 
-## [Se inferred_reviewed=false: "🔍 Perguntas inferidas — confirmação necessária"][Se inferred_reviewed=true: "✅ Perguntas inferidas — revistas manualmente"]
+## Perguntas inferidas
 
 [Se `inferred_questions_detail` vazio: omitir esta secção inteira.]
-[Se não vazio e inferred_reviewed=false:]
 Estas perguntas não têm gabarito no LearnWorlds. A resposta correcta foi inferida
-automaticamente a partir do gabarito ID / Docente e usada na reconciliação. Requerem
-confirmação humana antes de qualquer decisão sobre notas.
-[Se não vazio e inferred_reviewed=true:]
-As respostas inferidas foram confirmadas manualmente. Registo para referência:
+automaticamente a partir do gabarito ID / Docente e usada na reconciliação.
 
 [Para cada entrada em `inferred_questions_detail`:]
-- **(sem número atribuído)**: "[question_text primeiros 150 chars]"
+- **Q[doc_question_number se não vazio, senão "sem número"]**: "[question_text primeiros 150 chars]"
   - **Resposta inferida:** "[doc_correct_answer]"
   - **Confiança:** [confidence]
-  - **Acção:** Confirmar que a resposta inferida corresponde à intenção do docente. Se incorrecta, corrigir manualmente na tabela de extracção.
+  [Se confidence != "high":] - **Acção:** Confirmar que a resposta inferida corresponde à intenção do docente antes de qualquer decisão sobre notas.
 
 ---
 
@@ -222,17 +225,20 @@ As respostas inferidas foram confirmadas manualmente. Registo para referência:
 
 ## Next steps
 
-| Prioridade | Acção |
-|------------|-------|
-[Gerar linhas APENAS para as situações que existem nos dados. Seguir esta lógica de prioridade:]
-[🔴 Se answer_key_real_discrepancies:] | 🔴 | Verificar divergências detectadas entre gabaritos e corrigir a parametrização no LearnWorlds se confirmado o erro |
-[🔴 Se doc_override_flags:] | 🔴 | Corrigir parametrização no LearnWorlds para as perguntas onde o gabarito ID / Docente confirma erro |
-[🔴 Se over_answered_flags:] | 🔴 | Corrigir parametrização no LearnWorlds para aceitar as variantes de resposta correcta rejeitadas por texto adicional |
-[🔴 Se flagged_rows com zero-score:] | 🔴 | Investigar e corrigir pontuação zero para as respostas correctas identificadas |
-[🟡 Se not_accepted_but_full_flags:] | 🟡 | Verificar se as respostas com pontuação completa mas não reconhecidas pelo gabarito são válidas; se sim, actualizar o gabarito |
-[🔵 Se inferred_questions_detail e inferred_reviewed=false:] | 🔵 | Confirmar manualmente as [N] perguntas inferidas: comparar a resposta inferida com o gabarito ID / Docente original |
-[🔵 Se inferred_questions_detail e inferred_reviewed=true:] | 🔵 | Inferências já confirmadas — cruzar os resultados da reconciliação com a tabela de revisão para validar notas |
-[🔵 Se answer_key_doc_not_found:] | 🔵 | Verificar as [N] perguntas presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente |
+> **Contexto:** esta auditoria é pós-exame. As acções correctivas consistem em corrigir manualmente
+> as notas dos participantes nos sistemas da instituição — não em reconfigurar o LearnWorlds.
+> Para cada pergunta com problema, listar os alunos afectados e a correcção necessária.
+
+| Prioridade | Pergunta | Acção |
+|------------|----------|-------|
+[Gerar linhas APENAS para as situações que existem nos dados. Uma linha por pergunta afectada. Seguir esta lógica de prioridade:]
+[🔴 Se answer_key_real_discrepancies:] [Uma linha por pergunta em answer_key_real_discrepancies:] | 🔴 | Q[número]: [enunciado curto] | Divergência de gabarito confirmada — verificar manualmente e corrigir a nota dos alunos afectados se a resposta do gabarito ID / Docente for a correcta |
+[🔴 Se doc_override_flags:] [Uma linha por pergunta em doc_override_flags:] | 🔴 | Q[número]: [enunciado curto] | Corrigir manualmente a nota dos alunos que responderam conforme o gabarito ID / Docente mas receberam 0 pontos |
+[🔴 Se over_answered_flags:] [Uma linha por pergunta em over_answered_flags:] | 🔴 | Q[número ou "sem número"]: [enunciado curto] | Corrigir manualmente a nota dos alunos com resposta correcta rejeitada por texto adicional: [listar alunos e respostas] |
+[🔴 Se flagged_rows com zero-score:] [Uma linha por pergunta única em flagged_rows:] | 🔴 | Q[número]: [enunciado curto] | Corrigir manualmente a nota dos alunos com resposta correcta mas 0 pontos atribuídos: [listar alunos] |
+[🟡 Se not_accepted_but_full_flags:] [Uma linha por pergunta:] | 🟡 | Q[número]: [enunciado curto] | Verificar se a resposta com pontuação completa mas não reconhecida pelo gabarito é válida; se sim, corrigir notas dos restantes alunos |
+[🔵 Se inferred com confiança não-alta (inferred_conf_breakdown.medium ou .low > 0):] | 🔵 | (inferida) | Confirmar manualmente as [N] perguntas inferidas com confiança média ou baixa antes de validar notas |
+[🔵 Se answer_key_doc_not_found:] | 🔵 | — | Verificar as [N] perguntas presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente |
 
 ---
 
@@ -493,12 +499,12 @@ def _build_context(run_dir: Path) -> dict:
                 continue
             ak_real_discrepancies.append({
                 "question_number": r.get("question_number", ""),
-                "question_text": r.get("question_text", "")[:120],
-                "lw_correct_answer": lw_ans,
-                "doc_correct_answer": doc_ans,
+                "question_text": r.get("question_text", "")[:200],
+                "lw_correct_answer": lw_ans[:80],
+                "doc_correct_answer": doc_ans[:80],
                 "answers_match": r.get("answers_match", ""),
                 "confidence": r.get("confidence", ""),
-                "notes": r.get("notes", ""),
+                "notes": r.get("notes", "")[:80],
                 "source_doc": r.get("source_doc", ""),
             })
 
@@ -568,6 +574,7 @@ def _build_context(run_dir: Path) -> dict:
     inferred_questions_detail = [
         {
             "blockType": r.get("blockType", ""),
+            "doc_question_number": r.get("doc_question_number", ""),
             "question_text": r.get("question_text", "")[:200],
             "doc_correct_answer": r.get("doc_correct_answer", ""),
             "confidence": r.get("confidence", ""),
@@ -661,6 +668,7 @@ def _build_context(run_dir: Path) -> dict:
         "inferred_reconciled_questions": inferred_reconciled_questions,
         "inferred_rows_count": inferred_rows_count,
         "inferred_low_conf_rows_count": inferred_low_conf_rows_count,
+        "inferred_conf_breakdown": dict(Counter(r.get("confidence", "") for r in inferred_rows)),
     }
 
 
@@ -674,7 +682,7 @@ def _call_openai(api_key: str, model: str, context: dict) -> str:
 
     user_msg = (
         "Dados da corrida de auditoria (JSON):\n\n"
-        + json.dumps(context, ensure_ascii=False, indent=2)
+        + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
         + "\n\nProduz o relatório de interpretação no formato especificado."
     )
 
