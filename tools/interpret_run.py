@@ -420,19 +420,22 @@ def _build_context(run_dir: Path) -> dict:
         if k and k not in canon_qn:
             canon_qn[k] = r.get("question_number", "").strip()
 
-    # Active questions: named (from reconciliation_report) + unnamed (no question_number in LW)
+    # Every question in the report now carries a canonical live-order number — verifiable,
+    # inferred and no-config questions alike — so active_qns already covers the whole exam.
+    # The total is simply its length; adding inferred/queue counts on top would double-count
+    # them (they are already in active_qns now that they are numbered).
     active_qns = sorted(
         {r.get("question_number", "").strip() for r in report_rows if r.get("question_number", "").strip()},
         key=lambda x: int(x) if x.isdigit() else 999,
     )
-    # Unnamed = questions with no LW question_number: queue (no_config_match) + inferred
+    # Questions without an LW gabarito (inferred + no_config) — informational only.
     inferred_unnamed = len({
         r.get("description", "")
         for r in report_rows
         if r.get("verifiable", "") == "inferred" and r.get("description", "")
     })
-    unnamed_count = len(queue_rows) + inferred_unnamed
-    active_count = len(active_qns) + unnamed_count
+    no_lw_gabarito_count = len(queue_rows) + inferred_unnamed
+    active_count = len(active_qns)
 
     # Build cross-referenced question index
     questions_index = _build_question_index(config_rows, ak_rows, inferred_rows, report_rows)
@@ -706,8 +709,8 @@ def _build_context(run_dir: Path) -> dict:
         "submission_rows": total_rows,
         "n_students": n_students,
         "active_questions_count": active_count,
-        "active_questions_named": active_qns,        # with question_number (from exam_config)
-        "active_questions_unnamed_count": unnamed_count,  # fillInTheBlankBlock/match (no number)
+        "active_questions_named": active_qns,        # full live-order list, 1..N
+        "questions_without_lw_gabarito": no_lw_gabarito_count,  # inferred + no_config (informativo)
         "exam_config_exportable_count": len(config_rows),  # questions LW exported with answer key
         "numbering_note": (
             "Os números de pergunta vêm das submissões dos alunos. "
