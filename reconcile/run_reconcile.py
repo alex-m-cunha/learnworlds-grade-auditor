@@ -387,6 +387,23 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             grade_override[(g.get("learningUnit_id"), g.get("user_id"))] = g.get("grade")
         print(f"Loaded {len(grade_override)} course-grade record(s) for override.")
 
+    # ---- canonical global question numbering ----
+    # The live submissions are the only source that holds ALL questions (verifiable
+    # AND inferred — fill-in-blank, match) in the exact order students saw them. The
+    # XLSX answer key omits inferred-type questions, so its position (cfg.question_number)
+    # drifts out of sync; the inferred doc number is yet another scheme. Mixing the two
+    # produced duplicate numbers (e.g. two "Q5"). Here we assign a single watertight
+    # index from first-appearance order in the submission stream, shared by every
+    # question type. All students share the same block order, so this is stable.
+    global_qnum: dict = {}
+    _qnum_seq: dict = defaultdict(int)
+    for r in submissions:
+        key = (r.get("assessment_id"), r.get("blockId"))
+        if key not in global_qnum:
+            aid_k = r.get("assessment_id")
+            _qnum_seq[aid_k] += 1
+            global_qnum[key] = _qnum_seq[aid_k]
+
     # ---- per-answer reconciliation rows + accumulators ----
     report_rows = []
     grade_acc = defaultdict(lambda: {"pts": Decimal(0), "max": Decimal(0), "meta": {}})
@@ -420,7 +437,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
             "assessment_id": aid, "user_id": uid,
             "username": r.get("username"), "email": r.get("email"),
             "blockId": bid, "blockType": bt,
-            "question_number": (cfg or {}).get("question_number", "") or (inferred_entry or {}).get("doc_question_number", ""),
+            "question_number": global_qnum.get((aid, bid), ""),
             "description": desc, "submitted_answer": ans,
             "configured_correct_answer": chk["configured_correct"],
             "configured_accepted_answers": chk["accepted"],
@@ -447,7 +464,7 @@ def run(label=None, assessment_dir=None, grades_csv=None, run_dir=None) -> int:
         if chk["verifiable"] in ("no_config_match", "no_answer_key", "unverifiable_mcma", "inferred_unresolved"):
             q = queue[(aid, bid)]
             q["blockType"] = bt; q["description"] = desc
-            q["question_number"] = (cfg or {}).get("question_number", "")
+            q["question_number"] = global_qnum.get((aid, bid), "")
             q["reason"] = chk["verifiable"]
             a = q["answers"][norm(ans)]
             a["n"] += 1; a["points"].add(str(pts))
