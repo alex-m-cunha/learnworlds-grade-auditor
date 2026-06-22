@@ -567,7 +567,9 @@ def _build_questions_payload(rows: list[dict]) -> list[dict]:
 _QUESTION_BATCH_SIZE = 15  # questions per LLM call to avoid context overflow
 
 
-def _call_openai_batch(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+def _call_openai_batch(
+    client, model: str, questions: list[dict], doc_text: str, doc_note: str = ""
+) -> list[dict]:
     """Single LLM call for one batch of questions against one doc."""
     # Strip internal fields before sending — only blockType and question_text go to the LLM.
     llm_questions = [
@@ -575,7 +577,8 @@ def _call_openai_batch(client, model: str, questions: list[dict], doc_text: str)
         for q in questions
     ]
     user_msg = (
-        "LMS question texts (search references only — no answer options):\n"
+        (doc_note + "\n\n" if doc_note else "")
+        + "LMS question texts (search references only — no answer options):\n"
         + json.dumps(llm_questions, ensure_ascii=False, indent=2)
         + "\n\nDocument text:\n"
         + doc_text
@@ -606,7 +609,9 @@ def _call_openai_batch(client, model: str, questions: list[dict], doc_text: str)
     )
 
 
-def call_openai(client, model: str, questions: list[dict], doc_text: str) -> list[dict]:
+def call_openai(
+    client, model: str, questions: list[dict], doc_text: str, doc_note: str = ""
+) -> list[dict]:
     """Call LLM in batches of _QUESTION_BATCH_SIZE to avoid context overflow."""
     all_results: list[dict] = []
     for i in range(0, len(questions), _QUESTION_BATCH_SIZE):
@@ -615,7 +620,7 @@ def call_openai(client, model: str, questions: list[dict], doc_text: str) -> lis
         total_batches = (len(questions) + _QUESTION_BATCH_SIZE - 1) // _QUESTION_BATCH_SIZE
         if total_batches > 1:
             print(f"    batch {batch_num}/{total_batches} ({len(batch)} questions)...")
-        batch_results = _call_openai_batch(client, model, batch, doc_text)
+        batch_results = _call_openai_batch(client, model, batch, doc_text, doc_note)
         # Map by qid — stable regardless of the order the LLM returns results.
         qid_to_qn = {q["qid"]: q["_lw_question_number"] for q in batch}
         for item in batch_results:
@@ -751,6 +756,60 @@ def _write_inferred_csv(rows: list[dict], path: Path) -> None:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _live_positions(run_dir: str) -> dict[str, int]:
+    """Map join_key(question_text) -> 1-based live position from the submission order.
+
+    The submissions hold every question in the exact order students saw them (all
+    students share the same order), so this is the authoritative exam sequence —
+    it includes inferred-type questions that the exam_config export omits.
+    Returns {} when submissions are unavailable.
+    """
+    if not run_dir:
+        return {}
+    sub_path = Path(run_dir) / "submissions" / "submissions_export.csv"
+    if not sub_path.exists():
+        return {}
+    pos: dict[str, int] = {}
+    n = 0
+    with sub_path.open(encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            k = _join_key(r.get("description", ""))
+            if k and k not in pos:
+                n += 1
+                pos[k] = n
+    return pos
+
+
+def _assign_rows_to_docs(
+    rows: list[dict], n_docs: int, live_pos: dict[str, int]
+) -> list[list[dict]]:
+    """Split exam-config rows across docs by LIVE exam order — one contiguous block
+    per doc (doc 0 = first block, doc 1 = next, …), assuming docs are passed in exam
+    order. Each question is then sent ONLY to the document it belongs to, so the LLM
+    can never false-match it against a look-alike question in an unrelated doc.
+
+    Requires live positions (from submissions). Falls back to sending every question
+    to every doc when the split can't be determined (single doc, or no submissions).
+    """
+    if n_docs <= 1 or not live_pos:
+        return [list(rows) for _ in range(max(n_docs, 1))]
+
+    max_pos = max(live_pos.values())
+    chunk = (max_pos + n_docs - 1) // n_docs  # ceil division — block size by live position
+    groups: list[list[dict]] = [[] for _ in range(n_docs)]
+    unplaced: list[dict] = []
+    for row in rows:
+        p = live_pos.get(_join_key(row.get("description", "")))
+        if p is None:
+            unplaced.append(row)  # text not in submissions — give it a chance in every doc
+            continue
+        idx = min((p - 1) // chunk, n_docs - 1)
+        groups[idx].append(row)
+    for g in groups:
+        g.extend(unplaced)
+    return groups
+
+
 def run(
     exam_config: str,
     docs: list[str],
@@ -783,8 +842,6 @@ def run(
     gaps = sum(1 for r in rows if not (r.get("configured_accepted_answers_raw") or "").strip())
     print(f"Loaded {len(rows)} verifiable question(s) from exam_config ({gaps} without LW answer).")
 
-    questions_payload = _build_questions_payload(rows)
-
     try:
         from openai import OpenAI
     except ImportError as exc:
@@ -794,9 +851,29 @@ def run(
 
     client = OpenAI(api_key=env["api_key"])
 
+    # Scope questions to the document each belongs to (by live exam order), so a
+    # question is never sent to an unrelated doc where it could latch onto a
+    # look-alike. When there is a single doc — or no submissions to derive the
+    # order — every question goes to that doc, as before.
+    n_docs = len(docs)
+    live_pos = _live_positions(run_dir)
+    row_groups = _assign_rows_to_docs(rows, n_docs, live_pos)
+    if n_docs > 1 and live_pos:
+        print(
+            f"Scoping questions across {n_docs} docs by live exam order: "
+            + ", ".join(f"{len(g)}" for g in row_groups)
+            + " questions per doc."
+        )
+    elif n_docs > 1:
+        print(
+            "WARNING: no live order available (submissions missing) — sending all "
+            "questions to every doc; cross-doc false matches possible.",
+            file=sys.stderr,
+        )
+
     best: dict[str, dict] = {}
 
-    for doc_str in docs:
+    for doc_idx, doc_str in enumerate(docs):
         doc_path = Path(doc_str).expanduser()
         if not doc_path.is_absolute():
             doc_path = PROJECT_ROOT / doc_path
@@ -804,12 +881,29 @@ def run(
             print(f"WARNING: doc not found, skipping: {doc_path}", file=sys.stderr)
             continue
 
-        print(f"Processing: {doc_path.name}")
+        doc_rows = row_groups[doc_idx] if doc_idx < len(row_groups) else rows
+        if not doc_rows:
+            print(f"Processing: {doc_path.name} — no questions assigned, skipping.")
+            continue
+
+        questions_payload = _build_questions_payload(doc_rows)
+        doc_note = (
+            f"This document is part {doc_idx + 1} of {n_docs} of the exam. The "
+            f"{len(doc_rows)} questions below are the ones expected to appear in it. "
+            "Match each to the document; if a question is genuinely absent, mark it "
+            "unmatched rather than matching a different question."
+            if n_docs > 1 and live_pos
+            else ""
+        )
+
+        print(f"Processing: {doc_path.name}  ({len(doc_rows)} questions assigned)")
         doc_text = extract_doc_text(doc_path)
         print(f"  {len(doc_text):,} chars of enriched text extracted.")
 
         try:
-            llm_results = call_openai(client, effective_model, questions_payload, doc_text)
+            llm_results = call_openai(
+                client, effective_model, questions_payload, doc_text, doc_note
+            )
         except Exception as exc:
             print(f"  ERROR calling OpenAI for {doc_path.name}: {exc}", file=sys.stderr)
             continue
