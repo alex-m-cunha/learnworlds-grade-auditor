@@ -190,6 +190,7 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
     - verifiable: "yes" | "no_config_match" | "unverifiable_mcma" | "no_answer_key"
     - flag: None | "answer_accepted_but_zero" | "answer_correct_per_doc_but_zero"
             | "answer_not_accepted_but_full" | "answer_accepted_but_partial"
+            | "mcma_wrong_not_penalized"
     - answer_matched_source: "lw" | "doc" | ""
     """
     result = {
@@ -229,7 +230,12 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
                     if is_correct and pts == 0:
                         result["flag"] = "answer_correct_per_doc_but_zero"
                     elif not is_correct and mx > 0 and pts == mx:
-                        result["flag"] = "answer_not_accepted_but_full"
+                        # All correct options selected plus extra wrong ones, yet full
+                        # marks → LW did not penalise the wrong picks (not "not accepted").
+                        if doc_accepted_keys <= selected:
+                            result["flag"] = "mcma_wrong_not_penalized"
+                        else:
+                            result["flag"] = "answer_not_accepted_but_full"
                 return result
             # Empty doc set — fall through to LW checking
         else:
@@ -257,7 +263,9 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
     # (e.g. comma vs dash) don't produce false mismatches.
     accepted_keys = {join_key(a) for a in accepted}
 
-    if (block_type or "").lower() == "mcma":
+    is_mcma = (block_type or "").lower() == "mcma"
+    selected: set = set()
+    if is_mcma:
         selected, ambiguous = reconstruct_mcma(answer, cfg_entry["options"])
         if ambiguous:
             result["verifiable"] = "unverifiable_mcma"
@@ -283,7 +291,15 @@ def check_answer(block_type, answer, points, max_points, cfg_entry):
         else:
             result["flag"] = "answer_accepted_but_zero"
     elif (not is_correct) and mx > 0 and pts == mx:
-        result["flag"] = "answer_not_accepted_but_full"
+        # MCMA with partial credit: when the student selected ALL accepted options
+        # plus extra (wrong) ones and still scored full, LW simply did not penalise
+        # the wrong picks — not an "answer not accepted" case. Flag it distinctly so
+        # the report can say so accurately. The genuinely anomalous case (full marks
+        # WITHOUT all correct options) keeps answer_not_accepted_but_full.
+        if is_mcma and accepted_keys and accepted_keys <= selected:
+            result["flag"] = "mcma_wrong_not_penalized"
+        else:
+            result["flag"] = "answer_not_accepted_but_full"
     elif is_correct and 0 < pts < mx:
         result["flag"] = "answer_accepted_but_partial"  # informational
     return result

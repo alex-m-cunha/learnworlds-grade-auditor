@@ -70,6 +70,14 @@ REGRAS SOBRE OS DADOS:
   resposta alternativa válida que o gabarito não prevê. NÃO confundir com "resposta certa, 0 pontos":
   aqui o aluno TEM pontos. Descrever como "resposta não reconhecida pelo gabarito mas com pontuação
   completa atribuída — requer verificação". Urgência 🟡.
+- `mcma_wrong_not_penalized` (em `mcma_not_penalized_flags`): pergunta de escolha múltipla com
+  várias respostas (MCMA) onde o aluno seleccionou TODAS as opções correctas MAS também uma ou mais
+  opções incorrectas, e mesmo assim recebeu pontuação máxima — o LearnWorlds NÃO penalizou as
+  selecções erradas. NÃO é parsing nem "resposta não reconhecida": o aluno acertou as certas, o
+  problema é o LW não descontar as erradas. Descrever como "opção incorrecta seleccionada mas não
+  penalizada — pontuação máxima atribuída", indicando para cada aluno qual a opção incorrecta que
+  escolheu. Recomendar verificar se a configuração de pontuação do MCMA devia penalizar selecções
+  erradas. Urgência 🟡.
 - `fill_in_blank_over_answered` (em `over_answered_flags`): pergunta de preenchimento de lacunas
   onde o aluno escreveu a resposta correcta mas com texto adicional. O LearnWorlds exige
   correspondência exacta e rejeitou. Descrever como "resposta correcta com texto a mais — o sistema
@@ -151,6 +159,7 @@ Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_q
 [Se existem ocorrências — listar cada uma em linha separada, precedida de "Ocorrências detectadas:" se houver mais de 1:]
 [Se flagged_rows com answer_accepted_but_zero ou answer_correct_per_doc_but_zero:] - [N] resposta(s) correctas com 0 pontos.
 [Se not_accepted_but_full_flags:] - [N] resposta(s) não reconhecidas pelo gabarito mas com pontuação completa.
+[Se mcma_not_penalized_flags:] - [N] resposta(s) MCMA com opção incorrecta não penalizada (pontuação máxima).
 [Se over_answered_flags:] - [N] resposta(s) correctas rejeitadas por texto adicional.
 [Se answer_key_real_discrepancies:] - [N] divergência(s) entre gabarito LearnWorlds e gabarito ID / Docente — possível parametrização errada.
 
@@ -158,15 +167,15 @@ Cobertura: [expected_answer_key_count] perguntas verificáveis + [len(inferred_q
 
 ## ⚠️ Problemas a corrigir
 
-[OBRIGATÓRIO: verifica individualmente cada uma das 5 condições abaixo, usando `problems_checklist`
+[OBRIGATÓRIO: verifica individualmente cada uma das 6 condições abaixo, usando `problems_checklist`
 no contexto como guia. Cada condição é independente — não inferir a partir de outras.
 
 REGRA DE OUTPUT (importante):
 - Mostra APENAS as condições cuja lista NÃO está vazia. Omite por completo — sem cabeçalho, sem
   qualquer texto — todas as condições vazias. NUNCA escrevas "Nenhum problema identificado" por
   baixo de uma condição individual. A frase "Nenhum problema identificado." só pode aparecer UMA
-  vez, sozinha, e apenas quando AS 5 listas estiverem TODAS vazias.
-- Os números 1–5 abaixo são guia interno — NÃO os uses como numeração no relatório. Apresenta cada
+  vez, sozinha, e apenas quando AS 6 listas estiverem TODAS vazias.
+- Os números 1–6 abaixo são guia interno — NÃO os uses como numeração no relatório. Apresenta cada
   problema encontrado com o seu próprio título em negrito (o título indicado a seguir à seta "→").
 - NÃO copies para o relatório as frases de instrução (ex.: "Listar pergunta e alunos (nome + resposta
   + pontos)"). Escreve só o título, uma frase de contexto, e a lista de perguntas/alunos com os dados
@@ -200,6 +209,17 @@ REGRA DE OUTPUT (importante):
    [repetir para cada item em not_accepted_but_full_flags]
 
    Nota: estes alunos TÊM pontos — não é problema de pontuação zero. Urgência 🟡.
+
+6. Se `mcma_not_penalized_flags` não vazio → escrever (substituindo os placeholders pelos dados reais):
+
+   Opção incorrecta seleccionada mas não penalizada — pontuação máxima (MCMA):
+   - **Q[question_number]**: "[question_text]"
+     - [student_name]: seleccionou uma opção fora do gabarito mas recebeu [points]/[max_points] pontos
+   [repetir para cada item em mcma_not_penalized_flags]
+
+   Nota: o aluno acertou todas as opções correctas mas também escolheu pelo menos uma incorrecta, e o
+   LearnWorlds não descontou. Verificar se a pontuação do MCMA devia penalizar selecções erradas.
+   Urgência 🟡.
 
 ---
 
@@ -247,6 +267,7 @@ automaticamente a partir do gabarito ID / Docente e usada na reconciliação.
 [🔴 Se over_answered_flags:] [Uma linha por pergunta em over_answered_flags:] | 🔴 | Q[número ou "sem número"]: [enunciado curto] | Corrigir manualmente a nota dos alunos com resposta correcta rejeitada por texto adicional: [listar alunos e respostas] |
 [🔴 Se flagged_rows com zero-score:] [Uma linha por pergunta única em flagged_rows:] | 🔴 | Q[número]: [enunciado curto] | Corrigir manualmente a nota dos alunos com resposta correcta mas 0 pontos atribuídos: [listar alunos] |
 [🟡 Se not_accepted_but_full_flags:] [Uma linha por pergunta:] | 🟡 | Q[número]: [enunciado curto] | Verificar se a resposta com pontuação completa mas não reconhecida pelo gabarito é válida; se sim, corrigir notas dos restantes alunos |
+[🟡 Se mcma_not_penalized_flags:] [Uma linha por pergunta:] | 🟡 | Q[número]: [enunciado curto] | Verificar a configuração de pontuação do MCMA — alunos seleccionaram opção incorrecta mas receberam pontuação máxima (selecções erradas não penalizadas) |
 [🔵 Se inferred com confiança não-alta (inferred_conf_breakdown.medium ou .low > 0):] | 🔵 | (inferida) | Confirmar manualmente as [N] perguntas inferidas com confiança média ou baixa antes de validar notas |
 [🔵 Se answer_key_doc_not_found:] | 🔵 | — | Verificar as [N] perguntas presentes no gabarito LearnWorlds mas não encontradas no gabarito ID / Docente |
 
@@ -501,6 +522,21 @@ def _build_context(run_dir: Path) -> dict:
         if r.get("flag", "").strip() == "fill_in_blank_over_answered"
     ]
 
+    # MCMA: student selected all correct options plus extra wrong ones, yet scored full —
+    # LW did not penalise the wrong picks.
+    mcma_not_penalized_flags = [
+        {
+            "question_number": r.get("question_number", "") or "(sem número no LW)",
+            "question_text": r.get("description", "")[:150],
+            "student_name": r.get("username", ""),
+            "submitted_answer": r.get("submitted_answer", ""),
+            "points": r.get("points", ""),
+            "max_points": r.get("max_points", ""),
+        }
+        for r in report_rows
+        if r.get("flag", "").strip() == "mcma_wrong_not_penalized"
+    ]
+
     # Manual review queue — unverifiable questions (no question_number in LW export)
     review_queue = [
         {
@@ -687,12 +723,14 @@ def _build_context(run_dir: Path) -> dict:
             1 for r in flagged if r["flag"] == "answer_accepted_but_zero"
         ),
         "not_accepted_but_full_count": len(not_accepted_but_full_flags),
+        "mcma_not_penalized_count": len(mcma_not_penalized_flags),
         "has_any_problem": bool(
             ak_real_discrepancies
             or doc_override_flags
             or over_answered_flags
             or any(r["flag"] == "answer_accepted_but_zero" for r in flagged)
             or not_accepted_but_full_flags
+            or mcma_not_penalized_flags
         ),
     }
 
@@ -730,6 +768,7 @@ def _build_context(run_dir: Path) -> dict:
         "doc_override_flags": doc_override_flags,
         "over_answered_flags": over_answered_flags,
         "not_accepted_but_full_flags": not_accepted_but_full_flags,
+        "mcma_not_penalized_flags": mcma_not_penalized_flags,
         "problems_checklist": problems_checklist,
         "flag_counts": summary.get("flag_counts", {}),
         # Consistency (same answer, different points across students)
