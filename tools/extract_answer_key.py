@@ -190,6 +190,7 @@ def _join_key(value: object) -> str:
 
 
 _OPTION_PREFIX_RE = re.compile(r"^[a-zA-Z][.)]\s*", re.UNICODE)
+_DOC_MARKUP_RE = re.compile(r"\[/?[A-Z]+(?::[^\]]+)?\]", re.IGNORECASE)
 _TTF_NORMALISE = {
     "verdadeira": "Verdadeiro", "verdade": "Verdadeiro", "true": "Verdadeiro",
     "falsa": "Falso", "false": "Falso",
@@ -197,8 +198,9 @@ _TTF_NORMALISE = {
 
 
 def _clean_doc_answer(answer: str, block_type: str) -> str:
-    """Strip option letter prefix and normalise TTF gender variants."""
-    cleaned = _OPTION_PREFIX_RE.sub("", answer.strip())
+    """Strip doc markup tags, option letter prefix and normalise TTF gender variants."""
+    cleaned = _DOC_MARKUP_RE.sub("", answer.strip()).strip()
+    cleaned = _OPTION_PREFIX_RE.sub("", cleaned)
     if (block_type or "").upper() == "TTF":
         cleaned = _TTF_NORMALISE.get(cleaned.strip().lower(), cleaned)
     return cleaned
