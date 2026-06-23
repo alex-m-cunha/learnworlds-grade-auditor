@@ -10,6 +10,20 @@ que o sistema pontuou e o que o gabarito (LW ou docente) indica como correcto.
 
 ---
 
+## Como funciona
+
+Quando os alunos fazem um teste no LearnWorlds, as respostas ficam guardadas digitalmente na plataforma. Esta ferramenta faz três coisas:
+
+1. **Extrai** as respostas submetidas pelos alunos (via API), o gabarito configurado no LearnWorlds (via export da UI), e — se existir — o gabarito entregue pelo docente em Word (via LLM).
+
+2. **Reconcilia** as três fontes de forma determinística: compara cada resposta com o gabarito e sinaliza contradições — alunos que responderam correctamente mas ficaram com 0 pontos, respostas aceites pelo sistema mas contraditas pelo gabarito do docente, pontuações inconsistentes para a mesma resposta, entre outros.
+
+3. **Interpreta** os resultados via LLM e produz um relatório em linguagem natural, em Português, com os problemas encontrados por ordem de prioridade e os próximos passos sugeridos.
+
+O sistema nunca decide nada — cabe sempre a um humano verificar os casos sinalizados e decidir se há algo a corrigir.
+
+---
+
 ## Como usar
 
 ### 1. Configuração inicial (uma vez)
