@@ -1,199 +1,199 @@
 # LearnWorlds Grade Auditor
 
-Ferramenta interna da equipa LMS da **Nova SBE Executive Education**.
+[🇵🇹 Versão em Português](README.pt.md)
 
-Extrai dados de avaliações do LearnWorlds (API + export UI + gabaritos Word) e reconcilia-os
-de forma determinística para suportar auditorias de notas — sinalizando contradições entre o
-que o sistema pontuou e o que o gabarito (LW ou docente) indica como correcto.
+Internal tool of the LMS team at **Nova SBE Executive Education**.
 
-**Guião de operação detalhado → [`PROCESSO.md`](PROCESSO.md)**
+Extracts data from LearnWorlds assessments (API + UI export + professor Word documents) and reconciles them deterministically to support grade audits — flagging contradictions between what the system scored and what the answer key (LW or professor) indicates as correct.
 
----
-
-## Como funciona
-
-Quando os alunos fazem um teste no LearnWorlds, as respostas ficam guardadas digitalmente na plataforma. Esta ferramenta faz três coisas:
-
-1. **Extrai** as respostas submetidas pelos alunos (via API), o gabarito configurado no LearnWorlds (via export da UI), e — se existir — o gabarito entregue pelo docente em Word (via LLM).
-
-2. **Reconcilia** as três fontes de forma determinística: compara cada resposta com o gabarito e sinaliza contradições — alunos que responderam correctamente mas ficaram com 0 pontos, respostas aceites pelo sistema mas contraditas pelo gabarito do docente, pontuações inconsistentes para a mesma resposta, entre outros.
-
-3. **Interpreta** os resultados via LLM e produz um relatório em linguagem natural, em Português, com os problemas encontrados por ordem de prioridade e os próximos passos sugeridos.
-
-O sistema nunca decide nada — cabe sempre a um humano verificar os casos sinalizados e decidir se há algo a corrigir.
+**Detailed operation guide → [`PROCESS.md`](PROCESS.md)**
 
 ---
 
-## Como usar
+## How it works
 
-### 1. Configuração inicial (uma vez)
+When students take a test on LearnWorlds, their answers are stored digitally on the platform. This tool does three things:
 
-**a) Preencher o `.env`** — copiar `.env.example` para `.env` e preencher:
+1. **Extracts** student submissions (via API), the answer key configured in LearnWorlds (via UI export), and — if available — the professor's answer key from a Word document (via LLM).
+
+2. **Reconciles** all three sources deterministically: compares each answer against the answer key and flags contradictions — students who answered correctly but received 0 points, answers accepted by the system but contradicted by the professor's key, inconsistent scoring for the same answer across students, and more.
+
+3. **Interprets** the results via LLM and produces a natural-language report in Portuguese, listing issues by priority with suggested next steps.
+
+The system never makes decisions — a human always reviews the flagged cases and decides whether any corrections are needed.
+
+---
+
+## How to use
+
+### 1. Initial setup (once)
+
+**a) Fill in `.env`** — copy `.env.example` to `.env` and fill in:
 
 ```
-LEARNWORLDS_API_URL=https://online.executiveducation.novasbe.pt/admin/api
+LEARNWORLDS_API_URL=https://your-school.learnworlds.com/admin/api
 LEARNWORLDS_SCHOOL_ID=<school id>
-LEARNWORLDS_ACCESS_TOKEN=<token válido>
-OPENAI_API_KEY=<chave OpenAI — necessária para gabaritos Word e interpretação>
+LEARNWORLDS_ACCESS_TOKEN=<valid token>
+OPENAI_API_KEY=<OpenAI key — needed for Word answer keys and interpretation>
 OPENAI_MODEL=gpt-4o
 ```
 
-**b) Preencher o `assessment.cfg`** — ficheiro na raiz do projeto, para o assessment em curso:
+**b) Fill in `assessment.cfg`** — file at the project root, for the current assessment:
 
 ```
-PROGRAM=pggf2
+PROGRAM=program1
 LABEL=uc5-fintech
-LABEL_DISPLAY=UC5: Fintech e Inovação Financeira
+LABEL_DISPLAY=UC5: Fintech and Financial Innovation
 ASSESSMENT_ID=000000000000000000000000
 EPOCA=Normal
 ```
 
-### 2. Lançar
+### 2. Launch
 
-Fazer duplo-clique em **`run_audit_gui.py`** (ou correr `python run_audit_gui.py`).
+Double-click **`run_audit_gui.py`** (or run `python run_audit_gui.py`).
 
-Abre uma janela com duas abas: **Nova Run** (pipeline completo) e **Re-correr** (reconciliar / interpretar uma run existente).
+Opens a window with two tabs: **New Run** (full pipeline) and **Re-run** (reconcile / interpret an existing run).
 
-> Os launchers de terminal `run_audit.command` (macOS) e `run_audit.bat` (Windows) continuam disponíveis para quem preferir linha de comando.
-
----
-
-## O que a GUI faz
-
-### Aba "Nova Run"
-
-Formulário pré-preenchido com os valores do `assessment.cfg`. Os 4 passos activam-se em sequência:
-
-| Passo | Acção | O que corre |
-|-------|-------|-------------|
-| **[1/4]** Gabarito LW | Selecionar o XLSX exportado da UI | Extração de submissões (API) + importação do gabarito (XLSX) |
-| **[2/4]** Word docs *(opcional)* | Selecionar 1 ou mais `.docx` | Extração de respostas via OpenAI (Fase 1: perguntas com opções LW → `manual_answer_key.csv`; Fase 2: lacunas/correspondência → `inferred_answer_key.csv`) |
-| **[3/4]** Reconciliar | Botão | `run_reconcile` — sem API, sem LLM |
-| **[4/4]** Interpretar | Botão | `interpret_run` — gera `audit_interpretation.md` via OpenAI |
-
-### Aba "Re-correr"
-
-Seleccionar uma pasta de run existente e correr só Reconciliar e/ou Interpretar — útil após corrigir manualmente um `inferred_answer_key.csv` ou um `manual_answer_key.csv`.
+> Terminal launchers `run_audit.command` (macOS) and `run_audit.bat` (Windows) remain available for those who prefer the command line.
 
 ---
 
-## O que cada ficheiro é
+## What the GUI does
 
-### Configuração
+### "New Run" tab
 
-| Ficheiro | O que é |
-|----------|---------|
-| `assessment.cfg` | Assessment em curso: programa, label, ID, época. **Sem credenciais.** Actualizar antes de cada avaliação. |
-| `.env` | Credenciais da API LearnWorlds e chave OpenAI. **Nunca partilhar.** Não está no git. |
-| `.env.example` | Modelo do `.env` com placeholders. |
-| `requirements.txt` | Dependências Python. |
+Form pre-filled with `assessment.cfg` values. Four steps activate in sequence:
+
+| Step | Action | What runs |
+|------|--------|-----------|
+| **[1/4]** LW Answer Key | Select the XLSX exported from the UI | Submission extraction (API) + answer key import (XLSX) |
+| **[2/4]** Word docs *(optional)* | Select one or more `.docx` files | Answer extraction via OpenAI (Phase 1: questions with LW options → `manual_answer_key.csv`; Phase 2: fill-in-the-blank / matching → `inferred_answer_key.csv`) |
+| **[3/4]** Reconcile | Button | `run_reconcile` — no API, no LLM |
+| **[4/4]** Interpret | Button | `interpret_run` — generates `audit_interpretation.md` via OpenAI |
+
+### "Re-run" tab
+
+Select an existing run folder and run Reconcile and/or Interpret — useful after manually correcting an `inferred_answer_key.csv` or `manual_answer_key.csv`.
+
+---
+
+## File reference
+
+### Configuration
+
+| File | What it is |
+|------|-----------|
+| `assessment.cfg` | Current assessment: program, label, ID, period. **No credentials.** Update before each assessment. |
+| `.env` | LearnWorlds API credentials and OpenAI key. **Never share.** Not in git. |
+| `.env.example` | `.env` template with placeholders. |
+| `requirements.txt` | Python dependencies. |
 
 ### Launchers / interface
 
-| Ficheiro | O que é |
-|----------|---------|
-| `run_audit_gui.py` | Interface gráfica principal (tkinter). Duplo-clique para abrir. |
-| `run_audit.command` | Lançador alternativo macOS (terminal, diálogos osascript). |
-| `run_audit.bat` | Lançador alternativo Windows. |
+| File | What it is |
+|------|-----------|
+| `run_audit_gui.py` | Main graphical interface (tkinter). Double-click to open. |
+| `run_audit.command` | Alternative macOS launcher (terminal, osascript dialogs). |
+| `run_audit.bat` | Alternative Windows launcher. |
 
-### Código
+### Code
 
-| Pasta / ficheiro | O que é |
-|------------------|---------|
-| `extractor/` | Extractores de dados (API + XLSX). |
-| `extractor/run_extract.py` | Submissões via API (`GET /v2/assessments/{id}/responses`). |
-| `extractor/run_exam_config.py` | Gabarito LW a partir do XLSX exportado da UI. |
-| `extractor/run_grades.py` | Notas oficiais do curso via API (uso avançado). |
-| `extractor/config.py` | Lê `assessment.cfg` + `.env`. |
-| `reconcile/` | Reconciliador determinístico (sem I/O de rede). |
-| `reconcile/run_reconcile.py` | Junta submissões + gabaritos, aplica regras, gera relatórios. |
-| `reconcile/core.py` | Lógica de negócio: `check_answer()`, `join_key()`, flags. |
-| `tools/extract_answer_key.py` | Extrai respostas de ficheiros Word via OpenAI → `manual_answer_key.csv` + `inferred_answer_key.csv`. |
-| `tools/interpret_run.py` | Gera `audit_interpretation.md` — interpretação em Português via OpenAI. |
+| Folder / file | What it is |
+|---------------|-----------|
+| `extractor/` | Data extractors (API + XLSX). |
+| `extractor/run_extract.py` | Submissions via API (`GET /v2/assessments/{id}/responses`). |
+| `extractor/run_exam_config.py` | LW answer key from the manually exported XLSX. |
+| `extractor/run_grades.py` | Official course grades via API (advanced use). |
+| `extractor/config.py` | Reads `assessment.cfg` + `.env`. |
+| `reconcile/` | Deterministic reconciler (no network I/O). |
+| `reconcile/run_reconcile.py` | Joins submissions + answer keys, applies rules, generates reports. |
+| `reconcile/core.py` | Business logic: `check_answer()`, `join_key()`, flags. |
+| `tools/extract_answer_key.py` | Extracts answers from Word files via OpenAI → `manual_answer_key.csv` + `inferred_answer_key.csv`. |
+| `tools/interpret_run.py` | Generates `audit_interpretation.md` — Portuguese-language audit interpretation via OpenAI. |
 
-### Dados (não estão no git)
+### Data folders (not in git)
 
-| Pasta | O que é |
-|-------|---------|
-| `input/<programa>/exam_configs/` | Cópias dos XLSX exportados da UI. |
-| `input/<programa>/word_docs/` | Cópias dos guiões Word dos docentes. |
-| `output/<programa>/<label>/<timestamp>/` | Resultados de uma corrida. Nunca sobrescritos. |
+| Folder | What it is |
+|--------|-----------|
+| `input/<program>/exam_configs/` | Copies of the XLSX exports from the LW UI. |
+| `input/<program>/word_docs/` | Copies of professor Word documents. |
+| `output/<program>/<label>/<timestamp>/` | Run results. Never overwritten. |
 
 ---
 
-## Estrutura de output
+## Output structure
 
 ```
 output/
-  <programa>/                         ex: pggf2
-    <label>/                          ex: uc5-fintech
-      <YYYY-MM-DD_HHmmss>/            uma pasta por corrida, nunca sobrescrita
+  <program>/                          e.g. program1
+    <label>/                          e.g. uc5-fintech
+      <YYYY-MM-DD_HHmmss>/            one folder per run, never overwritten
         submissions/
           raw/
-            raw_response.json         resposta crua da API
-            extraction_report.json    contagens e avisos
-          submissions_export.csv      1 linha por bloco de resposta por aluno
+            raw_response.json         raw API response
+            extraction_report.json    counts and warnings
+          submissions_export.csv      1 row per answer block per student
           submissions_export.xlsx
         exam_config/
           raw/
             raw_exam_config.json
             extraction_report.json
-          exam_config_as_is.csv       gabarito LW: respostas corretas + opções
+          exam_config_as_is.csv       LW answer key: correct answers + options
           exam_config_as_is.xlsx
-        answer_key/                   só se o passo Word foi corrido
-          manual_answer_key.csv       gabarito docente (perguntas com opções LW)
-          inferred_answer_key.csv     respostas inferidas (lacunas / correspondência)
-        question_index.csv            índice unificado de todas as perguntas activas
-        reconcile/                    só se a reconciliação foi corrida
+        answer_key/                   only if the Word step was run
+          manual_answer_key.csv       professor's key (questions with LW options)
+          inferred_answer_key.csv     inferred answers (fill-in-the-blank / matching)
+        question_index.csv            unified index of all active questions
+        reconcile/                    only if reconciliation was run
           reconciliation_report/
-            reconciliation_report.csv     1 linha por (aluno × pergunta)
+            reconciliation_report.csv     1 row per (student × question)
             reconciliation_report.xlsx
           grade_reconciliation/
-            grade_reconciliation.csv      nota oficial vs recalculada por aluno
+            grade_reconciliation.csv      official vs recalculated grade per student
             grade_reconciliation.xlsx
           consistency_report/
-            consistency_report.csv        mesma resposta pontuada diferente entre alunos
+            consistency_report.csv        same answer scored differently across students
             consistency_report.xlsx
           manual_review_queue/
-            manual_review_queue.csv       perguntas que precisam de revisão humana
+            manual_review_queue.csv       questions requiring human review
             manual_review_queue.xlsx
           reconciliation_summary.json
-          reconciliation_summary.md       sumário legível com contagens e flags
-        audit_interpretation.md           interpretação IA em Português
+          reconciliation_summary.md       human-readable summary with counts and flags
+        audit_interpretation.md           AI interpretation in Portuguese
 ```
 
 ---
 
-## Flags de reconciliação
+## Reconciliation flags
 
-| Flag | Significado |
-|------|-------------|
-| `answer_correct_per_doc_but_zero` | ⚠️ Resposta correcta segundo o gabarito do docente, mas LW deu 0 — erro de parametrização no LW |
-| `answer_accepted_but_zero` | Resposta aceite pelo gabarito LW, mas 0 pontos atribuídos |
-| `answer_not_accepted_but_full` | Resposta não aceite pelo gabarito, mas nota máxima atribuída |
-| `mcma_wrong_not_penalized` | MCMA: aluno seleccionou todas as opções correctas + opções erradas e recebeu nota máxima — o LW não penalizou as erradas |
-| `answer_accepted_but_partial` | Crédito parcial configurado (informativo) |
-| `inconsistent_scoring` | Mesma pergunta + mesma resposta → pontos diferentes entre alunos |
-
----
-
-## Segurança
-
-- **`.env`** — credenciais sensíveis. Nunca commitar, nunca partilhar fora da equipa LMS.
-- **`output/`** — dados pessoais de alunos. Manter na pasta restrita OneDrive. Não criar links públicos.
-- **`input/`** — cópias dos gabaritos. Mesmas restrições.
-- Todos estão no `.gitignore`. O `assessment.cfg` é o único ficheiro de configuração que vai para o git.
+| Flag | Meaning |
+|------|---------|
+| `answer_correct_per_doc_but_zero` | ⚠️ Answer correct per professor's key, but LW gave 0 points — LW parametrisation error |
+| `answer_accepted_but_zero` | Answer accepted by LW answer key, but 0 points awarded |
+| `answer_not_accepted_but_full` | Answer not accepted by the key, but full marks awarded |
+| `mcma_wrong_not_penalized` | MCMA: student selected all correct options + wrong ones and received full marks — LW did not penalise the wrong picks |
+| `answer_accepted_but_partial` | Partial credit configured (informational) |
+| `inconsistent_scoring` | Same question + same answer → different points across students |
 
 ---
 
-## Troubleshooting rápido
+## Security
 
-| Sintoma | Solução |
+- **`.env`** — sensitive credentials. Never commit, never share outside the LMS team.
+- **`output/`** — student personal data. Keep in the restricted OneDrive folder. Do not create public links.
+- **`input/`** — copies of answer keys. Same restrictions.
+- All gitignored. `assessment.cfg` is the only configuration file in git (no credentials).
+
+---
+
+## Quick troubleshooting
+
+| Symptom | Solution |
 |---------|---------|
-| `HTTP 401/403` | Token LW expirado — colar novo token em `.env` |
-| `HTTP 404 Unit not found` | `ASSESSMENT_ID` errado em `assessment.cfg` |
-| `No .env file found` | Copiar `.env.example` para `.env` e preencher |
-| `OPENAI_API_KEY not set` | Adicionar `OPENAI_API_KEY=sk-...` ao `.env` |
-| `429 insufficient_quota` | Conta OpenAI sem créditos — recarregar em platform.openai.com |
-| macOS bloqueia o launcher | `chmod +x run_audit.command` no Terminal |
-| Tracebacks completos | Adicionar `DEBUG=true` ao `.env` |
+| `HTTP 401/403` | Expired LW token — paste new token in `.env` |
+| `HTTP 404 Unit not found` | Wrong `ASSESSMENT_ID` in `assessment.cfg` |
+| `No .env file found` | Copy `.env.example` to `.env` and fill in |
+| `OPENAI_API_KEY not set` | Add `OPENAI_API_KEY=sk-...` to `.env` |
+| `429 insufficient_quota` | OpenAI account out of credits — top up at platform.openai.com |
+| macOS blocks the launcher | Run `chmod +x run_audit.command` in Terminal |
+| Full tracebacks | Add `DEBUG=true` to `.env` |

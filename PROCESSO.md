@@ -1,5 +1,7 @@
 # Processo de auditoria de avaliações — end-to-end
 
+[🇬🇧 English version](PROCESS.md)
+
 ---
 
 ## O que isto faz (para quem não é técnico)
